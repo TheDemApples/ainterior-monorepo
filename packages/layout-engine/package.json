@@ -1,0 +1,9 @@
+{
+  "name": "@ainterior/layout-engine",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "sideEffects": false,
+  "scripts": { "test": "node tests/run.js" },
+  "dependencies": {}
+}
