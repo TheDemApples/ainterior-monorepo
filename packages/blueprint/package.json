@@ -1,0 +1,9 @@
+{
+  "name": "@ainterior/blueprint",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "sideEffects": false,
+  "scripts": { "example": "node examples/generate.js ./out" },
+  "dependencies": {}
+}
