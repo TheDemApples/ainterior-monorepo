@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ainterior — 3D room editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="editor.css" />
+</head>
+<body>
+<div id="app" class="app">
+
+  <!-- ───────────────────────── top bar ───────────────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark"></span>
+      <span class="wordmark">ainterior</span>
+      <span class="eyebrow">room editor</span>
+    </div>
+
+    <div class="bar-group" role="group" aria-label="View">
+      <span class="bar-label">view</span>
+      <div class="seg" id="viewSeg">
+        <button data-view="3d" class="on" aria-pressed="true">3D</button>
+        <button data-view="top" aria-pressed="false">Plan</button>
+        <button data-view="first-person" aria-pressed="false">Walk</button>
+      </div>
+    </div>
+
+    <div class="bar-group" role="group" aria-label="Units">
+      <span class="bar-label">units</span>
+      <div class="seg" id="unitSeg">
+        <button data-unit="mm" aria-pressed="false">mm</button>
+        <button data-unit="cm" class="on" aria-pressed="true">cm</button>
+        <button data-unit="ft" aria-pressed="false">ft-in</button>
+      </div>
+    </div>
+
+    <div class="bar-group">
+      <label class="chk"><input type="checkbox" id="clearanceToggle" /> <span>clearances</span></label>
+    </div>
+
+    <div class="bar-spacer"></div>
+
+    <div class="bar-group">
+      <button class="btn" id="aiBtn" title="Arrange with AI">AI arrange</button>
+      <button class="btn" id="undoBtn" title="Undo (⌘Z)">↶ undo</button>
+      <button class="btn" id="redoBtn" title="Redo (⇧⌘Z)">↷ redo</button>
+      <button class="btn" id="bpBtn" title="Generate an annotated blueprint">blueprint</button>
+      <button class="btn primary" id="snapBtn" title="Render a PNG">snapshot</button>
+    </div>
+  </header>
+
+  <!-- ───────────────────────── main ───────────────────────── -->
+  <main class="main">
+
+    <!-- catalog -->
+    <aside class="panel panel-left" aria-label="Catalog">
+      <div class="panel-head">
+        <span class="eyebrow">catalog</span>
+        <span class="mono dim" id="catCount">—</span>
+      </div>
+      <div class="panel-tools">
+        <input id="search" class="input" type="search" placeholder="Search name, type, tag…" aria-label="Search catalog" />
+        <div class="chips" id="cats"></div>
+      </div>
+      <div class="cat-list" id="catList" role="list"></div>
+      <div class="panel-foot mono dim">click to add · drag on floor to move</div>
+    </aside>
+
+    <!-- viewport -->
+    <section class="viewport-wrap">
+      <div id="viewport" class="viewport" aria-label="3D viewport"></div>
+      <div class="vp-help mono">
+        <b>drag</b> orbit · <b>right-drag</b> pan · <b>wheel</b> zoom · <b>⌘D</b> duplicate ·
+        <b>del</b> remove · <b>esc</b> deselect · <b>alt-drag</b> free · <b>shift</b> free rotate
+      </div>
+    </section>
+
+    <!-- inspector -->
+    <aside class="panel panel-right" aria-label="Inspector">
+      <div class="panel-head"><span class="eyebrow">selection</span></div>
+      <div id="inspector" class="inspector">
+        <p class="empty">Nothing selected. Click a piece in the room.</p>
+      </div>
+
+      <div class="panel-head" style="margin-top:auto">
+        <span class="eyebrow">violations</span>
+        <span class="mono dim" id="vCount">0</span>
+      </div>
+      <div class="violations" id="violations"></div>
+    </aside>
+  </main>
+
+  <footer class="statusbar mono">
+    <span id="roomInfo">—</span>
+    <span class="sep">·</span>
+    <span id="layoutInfo">—</span>
+    <span class="sep">·</span>
+    <span id="engineInfo">—</span>
+  </footer>
+</div>
+
+<dialog id="snapDlg" class="snapdlg">
+  <div class="snapdlg-head">
+    <span class="eyebrow">render</span>
+    <button class="btn" id="snapClose">close</button>
+  </div>
+  <img id="snapImg" alt="Rendered view of the room" />
+  <a class="btn primary" id="snapDl" download="ainterior-render.png">download png</a>
+</dialog>
+
+<!-- annotated blueprint: floor plan + named furniture + FF&E schedule (SPEC §5.2) -->
+<dialog id="bpDlg" class="snapdlg bpdlg">
+  <div class="snapdlg-head">
+    <span class="eyebrow">blueprint</span>
+    <div class="bar-group">
+      <div class="seg" id="bpPaperSeg" role="group" aria-label="Paper size">
+        <button data-paper="A3" class="on" aria-pressed="true">A3</button>
+        <button data-paper="A4" aria-pressed="false">A4</button>
+        <button data-paper="Letter" aria-pressed="false">Letter</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="bpClearances" /> <span>clearances</span></label>
+      <a class="btn" id="bpDl" download="ainterior-blueprint.svg">download svg</a>
+      <button class="btn" id="bpClose">close</button>
+    </div>
+  </div>
+  <div id="bpHost" class="bp-host" aria-label="Annotated floor plan"></div>
+  <p class="mono dim" id="bpMeta">—</p>
+</dialog>
+
+<script type="module" src="editor.js"></script>
+</body>
+</html>

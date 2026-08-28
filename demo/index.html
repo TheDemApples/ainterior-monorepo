@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ainterior — your room, real dimensions, actually editable</title>
+  <meta name="description" content="ainterior turns a real room into an editable 3D space. Real furniture at real dimensions, AI layouts that respect clearances, and a blueprint a contractor can read.">
+  <script
+    src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.0/dist/index.global.js"
+    integrity="sha384-nWTzRTCY/9V4Bo352ehygr1c4cnst4XN6lMR3fipakEQrhVpc0hEM5Dii3Amz0sT"
+    crossorigin="anonymous"
+  ></script>
+  <style type="text/tailwindcss">
+    @custom-variant dark (&:where(.dark, .dark *));
+  </style>
+  <script>
+    // ainterior is a dark-first brand (SPEC §2) and the studio at editor.html is
+    // hard-dark, so the marketing surface defaults to dark rather than following
+    // the OS. Otherwise a light-preference visitor reads a bone-white page and
+    // then drops into a near-black 3D editor one click later. A visitor who
+    // explicitly picks light keeps that choice (persisted below).
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('ainterior-theme'); } catch (e) {}
+      document.documentElement.classList.toggle('dark', saved !== 'light');
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:ital,wght@0,300..800;1,400&family=Instrument+Serif:ital@1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="min-h-dvh text-sm antialiased">
+
+<a class="skip-link" href="#hero">Skip to content</a>
+
+<!-- ══ 1 · SPLASH LOGO BLUR-REVEAL (motion 1) ══════════════════════════ -->
+<div id="splash" class="splash" aria-hidden="true" data-splash>
+  <div class="splash__mask">
+    <div class="splash__logo">
+      <span class="splash__word">ainterior</span>
+      <span class="splash__rule" aria-hidden="true"></span>
+      <span class="splash__meta mono">DIMENSIONALLY HONEST INTERIORS</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 2 · LIQUID-GLASS NAV (motion 2) ═════════════════════════════════ -->
+<header class="nav-wrap" data-nav>
+  <nav class="nav" aria-label="Primary">
+    <a class="nav__brand" href="#hero">
+      <span class="nav__mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+          <path d="M3 20V8.5L12 3l9 5.5V20" stroke-linejoin="round"/>
+          <path d="M8.6 20v-6.4h6.8V20" stroke-linejoin="round"/>
+          <path d="M3 20h18" />
+        </svg>
+      </span>
+      <span class="nav__word">ainterior</span>
+    </a>
+
+    <button class="nav__toggle" type="button" aria-expanded="false" aria-controls="nav-links" data-nav-toggle>
+      <span class="sr-only">Toggle navigation</span>
+      <span class="nav__bars" aria-hidden="true"><i></i><i></i></span>
+    </button>
+
+    <div class="nav__links" id="nav-links" data-nav-links>
+      <a href="#chapters">How it works</a>
+      <a href="#versus">Why us</a>
+      <a href="#segments">Who it's for</a>
+      <a href="#pricing">Pricing</a>
+    </div>
+
+    <button class="nav__theme" id="themeToggle" type="button"
+            aria-pressed="false" title="Switch between dark and light">
+      <span class="nav__theme-ico" aria-hidden="true"></span>
+      <span class="sr-only">Toggle light or dark theme</span>
+    </button>
+
+    <a class="btn btn--clay nav__cta" href="editor.html" data-magnetic>
+      <span class="btn__slide">
+        <span class="btn__t">Open the studio</span>
+        <span class="btn__t" aria-hidden="true">Open the studio</span>
+      </span>
+    </a>
+  </nav>
+</header>
+
+<main id="main">
+
+  <!-- ══ 3 · HERO ══════════════════════════════════════════════════════ -->
+  <section class="hero" id="hero">
+    <canvas class="hero__grid" data-blueprint-canvas aria-hidden="true"></canvas>
+    <div class="hero__veil" aria-hidden="true"></div>
+
+    <div class="shell hero__inner">
+      <p class="eyebrow reveal" data-reveal>
+        <span class="dot" aria-hidden="true"></span>
+        AI interior design · millimetre-true
+      </p>
+
+      <h1 class="h-display hero__h1 reveal" data-reveal>
+        Your room. Real dimensions.<br>
+        <em>Actually</em> editable.
+      </h1>
+
+      <p class="hero__sub reveal" data-reveal>
+        Capture your room with photos or a blueprint. We rebuild it as a dimensionally-accurate 3D
+        shell, fill it with furniture that physically exists at sizes that are actually true, and let
+        the AI arrange it — or you do. Output is a blueprint a contractor can read, not a pretty
+        picture of a room that doesn't exist.
+      </p>
+
+      <div class="hero__cta reveal" data-reveal>
+        <a class="btn btn--clay btn--lg" href="editor.html" data-magnetic>
+          <span class="btn__slide">
+            <span class="btn__t">Open the studio</span>
+            <span class="btn__t" aria-hidden="true">Open the studio</span>
+          </span>
+        </a>
+        <a class="btn btn--ghost btn--lg" href="#chapters" data-magnetic>
+          <span class="btn__slide">
+            <span class="btn__t">See how it works</span>
+            <span class="btn__t" aria-hidden="true">See how it works</span>
+          </span>
+        </a>
+      </div>
+
+      <ul class="caption-strip reveal mono" data-reveal>
+        <li><span class="caption-strip__k">CAPTURE</span> photos · blueprint · QR→phone</li>
+        <li><span class="caption-strip__k">STORAGE</span> integer millimetres</li>
+        <li><span class="caption-strip__k">SOLVER</span> collision + clearance aware</li>
+        <li><span class="caption-strip__k">EXPORT</span> annotated plan + FF&amp;E</li>
+      </ul>
+    </div>
+
+    <div class="hero__scroll mono" aria-hidden="true">SCROLL</div>
+  </section>
+
+  <!-- ══ 4 · LIVE DATA TILES (motion 5) ════════════════════════════════ -->
+  <section class="band tiles-band" aria-labelledby="tiles-h">
+    <div class="shell">
+      <h2 class="sr-only" id="tiles-h">By the numbers</h2>
+      <div class="tiles">
+        <article class="tile reveal" data-reveal>
+          <p class="eyebrow">Catalogued pieces</p>
+          <p class="tile__n mono"><span data-countup data-to="1200" data-sep="1">0</span><span class="tile__suffix">+</span></p>
+          <p class="tile__d">Real products, verified dimensions, proxy geometry for collision.</p>
+        </article>
+        <article class="tile reveal" data-reveal>
+          <p class="eyebrow">Capture accuracy</p>
+          <p class="tile__n mono"><span class="tile__prefix">±</span><span data-countup data-to="12">0</span><span class="tile__suffix">mm</span></p>
+          <p class="tile__d">Median wall-length error on a 12-photo desktop or phone capture.</p>
+        </article>
+        <article class="tile reveal" data-reveal>
+          <p class="eyebrow">Layouts per re-roll</p>
+          <p class="tile__n mono"><span data-countup data-to="4">0</span></p>
+          <p class="tile__d">Distinct candidate arrangements, each scored on flow and clearance.</p>
+        </article>
+        <article class="tile reveal" data-reveal>
+          <p class="eyebrow">Credits for catalog furniture</p>
+          <p class="tile__n mono"><span data-countup data-to="0">0</span></p>
+          <p class="tile__d">Placing real catalog pieces never costs a credit. Ever.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 5 · FOUR NUMBERED SCROLL CHAPTERS (motion 4) ══════════════════ -->
+  <section class="chapters" id="chapters" aria-labelledby="chapters-h">
+    <div class="shell">
+      <header class="sec-head reveal" data-reveal>
+        <p class="eyebrow">How it works</p>
+        <h2 class="h-sec" id="chapters-h">Four steps from a <em>real</em> room to a shippable plan.</h2>
+      </header>
+
+      <ol class="chapter-list">
+
+        <!-- 01 CAPTURE -->
+        <li class="chapter">
+          <div class="chapter__num-col">
+            <div class="chapter__num mono" aria-hidden="true">01</div>
+          </div>
+          <div class="chapter__body reveal" data-reveal>
+            <p class="eyebrow">Capture</p>
+            <h3 class="h-chap">Photos or a blueprint. Desktop, or <em>QR</em> to your phone.</h3>
+            <p class="prose">
+              Walk the room with your phone or drop in a floor plan. We reconstruct the shell —
+              walls, openings, ceiling height — as integer millimetres, then let you nudge any
+              measurement you know better than we do. Nothing downstream is guessed.
+            </p>
+            <ul class="ticks">
+              <li>12-photo sweep, or a single dimensioned plan PDF</li>
+              <li>Desktop session hands off to phone by QR, live</li>
+              <li>Every wall length editable before you commit</li>
+            </ul>
+            <figure class="viz viz--plan" data-viz="plan">
+              <svg viewBox="0 0 320 200" role="img" aria-label="Animated floor plan line drawing with dimension chains">
+                <g class="plan__hatch" aria-hidden="true">
+                  <path d="M0 0h320v200H0z" fill="url(#pgrid)"/>
+                </g>
+                <defs>
+                  <pattern id="pgrid" width="16" height="16" patternUnits="userSpaceOnUse">
+                    <path d="M16 0H0v16" fill="none" stroke="currentColor" stroke-opacity=".13" stroke-width=".5"/>
+                  </pattern>
+                </defs>
+                <path class="plan__wall" d="M28 26h180v52h84v96H28z"/>
+                <path class="plan__door" d="M28 120a26 26 0 0 0 26-26"/>
+                <path class="plan__win" d="M118 26h56"/>
+                <g class="plan__dim">
+                  <path d="M28 186h236"/>
+                  <path d="M28 181v10M264 181v10"/>
+                </g>
+                <text class="plan__t mono" x="146" y="178">4260</text>
+                <g class="plan__dim">
+                  <path d="M282 78v96"/>
+                  <path d="M277 78h10M277 174h10"/>
+                </g>
+                <text class="plan__t mono" x="292" y="130" transform="rotate(-90 292 130)">2400</text>
+              </svg>
+            </figure>
+          </div>
+        </li>
+
+        <!-- 02 BRING YOUR FURNITURE -->
+        <li class="chapter">
+          <div class="chapter__num-col">
+            <div class="chapter__num mono" aria-hidden="true">02</div>
+          </div>
+          <div class="chapter__body reveal" data-reveal>
+            <p class="eyebrow">Bring your furniture</p>
+            <h3 class="h-chap">Upload what you <em>own</em>, or pick what actually exists.</h3>
+            <p class="prose">
+              Photograph the sofa you're not throwing away and we measure it into the same
+              millimetre space. Or browse a catalog of real products whose depth, width and height
+              come from the manufacturer, not from a language model's imagination.
+            </p>
+            <ul class="ticks">
+              <li>Own-furniture capture → dimensioned proxy solid</li>
+              <li>Catalog items carry SKU, dims and clearance rules</li>
+              <li>Duplicate detection so your sofa exists once</li>
+            </ul>
+            <figure class="viz viz--handoff" data-viz="handoff">
+              <div class="handoff">
+                <div class="handoff__qr" aria-hidden="true">
+                  <div class="qr" data-qr></div>
+                  <p class="mono handoff__lbl">PAIR · 4F2K</p>
+                </div>
+                <div class="handoff__beam" aria-hidden="true">
+                  <i></i><i></i><i></i>
+                </div>
+                <div class="handoff__phone" aria-hidden="true">
+                  <div class="phone">
+                    <div class="phone__notch"></div>
+                    <div class="phone__shot"></div>
+                    <div class="phone__row mono">SOFA · 2180×880×880</div>
+                    <div class="phone__row mono">MEASURED · ±9mm</div>
+                  </div>
+                </div>
+              </div>
+            </figure>
+          </div>
+        </li>
+
+        <!-- 03 ARRANGE -->
+        <li class="chapter">
+          <div class="chapter__num-col">
+            <div class="chapter__num mono" aria-hidden="true">03</div>
+          </div>
+          <div class="chapter__body reveal" data-reveal>
+            <p class="eyebrow">Arrange</p>
+            <h3 class="h-chap">Let the AI propose. Or move it <em>yourself</em>, in 3D.</h3>
+            <p class="prose">
+              The solver returns several candidate layouts you can re-roll, each scored on
+              circulation width, sightlines and door swing. Don't like any of them? Drag pieces in
+              the 3D editor with live collision and clearance feedback. It will tell you when the
+              coffee table is 40mm too close, and it will not pretend otherwise.
+            </p>
+            <ul class="ticks">
+              <li>Re-roll for four fresh, scored candidates</li>
+              <li>Hard violations, not silent overlaps</li>
+              <li>Snap to walls, respect swing arcs and walkways</li>
+            </ul>
+            <figure class="viz viz--reroll" data-viz="reroll">
+              <div class="reroll">
+                <div class="reroll__stage">
+                  <div class="reroll__room" aria-hidden="true">
+                    <span class="pc pc--a"></span>
+                    <span class="pc pc--b"></span>
+                    <span class="pc pc--c"></span>
+                    <span class="pc pc--d"></span>
+                  </div>
+                </div>
+                <div class="reroll__meta mono">
+                  <span data-reroll-label>CANDIDATE 01 / 04</span>
+                  <span class="reroll__score">FLOW <b data-reroll-score>0.86</b></span>
+                </div>
+                <button class="btn btn--tiny" type="button" data-reroll-btn>Re-roll layout</button>
+              </div>
+            </figure>
+          </div>
+        </li>
+
+        <!-- 04 SHIP IT -->
+        <li class="chapter">
+          <div class="chapter__num-col">
+            <div class="chapter__num mono" aria-hidden="true">04</div>
+          </div>
+          <div class="chapter__body reveal" data-reveal>
+            <p class="eyebrow">Ship it</p>
+            <h3 class="h-chap">An annotated blueprint someone can <em>build</em> from.</h3>
+            <p class="prose">
+              Export a plan sheet with named furniture, dimension chains and an FF&amp;E schedule,
+              plus rendered views for the client. Hand it to a contractor, a stager or a landlord and
+              they can act on it without asking you a single follow-up question.
+            </p>
+            <ul class="ticks">
+              <li>Dimension chains from wall face to item edge</li>
+              <li>FF&amp;E schedule with SKUs and quantities</li>
+              <li>Rendered views from the same true geometry</li>
+            </ul>
+            <figure class="viz viz--sheet" data-viz="sheet">
+              <div class="sheet">
+                <div class="sheet__title mono">
+                  <span>A-101 · LIVING ROOM</span><span>1:50</span>
+                </div>
+                <div class="sheet__plan" aria-hidden="true">
+                  <span class="sh sh--sofa"><b class="mono">S1</b></span>
+                  <span class="sh sh--table"><b class="mono">T1</b></span>
+                  <span class="sh sh--shelf"><b class="mono">B1</b></span>
+                  <span class="sh-dim sh-dim--h"><i></i></span>
+                  <span class="sh-dim sh-dim--v"><i></i></span>
+                </div>
+                <table class="sheet__ffe mono">
+                  <caption class="sr-only">FF&amp;E schedule excerpt</caption>
+                  <thead><tr><th>TAG</th><th>ITEM</th><th>W×D×H</th></tr></thead>
+                  <tbody>
+                    <tr><td>S1</td><td>EKTORP 3-seat</td><td>2180×880×880</td></tr>
+                    <tr><td>T1</td><td>LISABO table</td><td>1180×780×450</td></tr>
+                    <tr><td>B1</td><td>BILLY shelf</td><td>800×280×2020</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </figure>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ══ 6 · DIFFERENTIATOR COMPARISON ═════════════════════════════════ -->
+  <section class="versus" id="versus" aria-labelledby="versus-h">
+    <div class="shell">
+      <header class="sec-head reveal" data-reveal>
+        <p class="eyebrow">The difference</p>
+        <h2 class="h-sec" id="versus-h">One of these you can <em>build</em>. The other is a picture.</h2>
+      </header>
+
+      <div class="vs">
+        <div class="vs__col vs__col--them reveal" data-reveal>
+          <div class="vs__head">
+            <p class="eyebrow">Image generators</p>
+            <p class="vs__title">A pretty room that doesn't exist</p>
+          </div>
+          <ul class="vs__list">
+            <li><span class="vs__ic vs__ic--no" aria-hidden="true"></span><span><b>Invented furniture.</b> Nothing in the frame is a product you can buy.</span></li>
+            <li><span class="vs__ic vs__ic--no" aria-hidden="true"></span><span><b>Invented dimensions.</b> The sofa is whatever size the pixels needed it to be.</span></li>
+            <li><span class="vs__ic vs__ic--no" aria-hidden="true"></span><span><b>Not editable.</b> Move the table 200mm left? Re-prompt and lose the room.</span></li>
+            <li><span class="vs__ic vs__ic--no" aria-hidden="true"></span><span><b>Not buyable.</b> No SKUs, no schedule, no prices.</span></li>
+            <li><span class="vs__ic vs__ic--no" aria-hidden="true"></span><span><b>Not exportable.</b> A JPEG is not something a contractor can work from.</span></li>
+            <li><span class="vs__ic vs__ic--no" aria-hidden="true"></span><span><b>No clearances.</b> Doors open into cabinets and nobody notices.</span></li>
+          </ul>
+          <p class="vs__foot mono">OUTPUT · image.png</p>
+        </div>
+
+        <div class="vs__spine" aria-hidden="true"><span class="mono">VS</span></div>
+
+        <div class="vs__col vs__col--us reveal" data-reveal>
+          <div class="vs__head">
+            <p class="eyebrow">ainterior</p>
+            <p class="vs__title">Your actual room, manipulable in 3D</p>
+          </div>
+          <ul class="vs__list">
+            <li><span class="vs__ic vs__ic--yes" aria-hidden="true"></span><span><b>Real furniture.</b> Catalog products, plus the pieces you already own.</span></li>
+            <li><span class="vs__ic vs__ic--yes" aria-hidden="true"></span><span><b>Real dimensions.</b> Integer millimetres end to end; metric or imperial on display.</span></li>
+            <li><span class="vs__ic vs__ic--yes" aria-hidden="true"></span><span><b>Fully editable.</b> Drag, rotate, swap. The geometry stays true.</span></li>
+            <li><span class="vs__ic vs__ic--yes" aria-hidden="true"></span><span><b>Buyable.</b> Every placed item carries a SKU and lands on the schedule.</span></li>
+            <li><span class="vs__ic vs__ic--yes" aria-hidden="true"></span><span><b>Exportable.</b> Annotated plan, dimension chains, FF&amp;E, rendered views.</span></li>
+            <li><span class="vs__ic vs__ic--yes" aria-hidden="true"></span><span><b>Clearance-aware.</b> Violations are surfaced, never smoothed over.</span></li>
+          </ul>
+          <p class="vs__foot mono">OUTPUT · plan.pdf · ffe.csv · scene.json</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 7 · SEGMENTS ══════════════════════════════════════════════════ -->
+  <section class="band" id="segments" aria-labelledby="segments-h">
+    <div class="shell">
+      <header class="sec-head reveal" data-reveal>
+        <p class="eyebrow">Who it's for</p>
+        <h2 class="h-sec" id="segments-h">Built for people who get <em>measured</em> on the result.</h2>
+      </header>
+
+      <div class="segs">
+        <article class="seg reveal" data-reveal>
+          <p class="seg__n mono">01</p>
+          <h3 class="seg__h">Real-estate stagers</h3>
+          <p class="seg__p">Stage a listing before the van arrives. Prove the sectional fits, show
+            three arrangements to the vendor, and export a pull list your crew can load.</p>
+          <p class="seg__tag mono">LISTING TURNAROUND · HOURS</p>
+        </article>
+        <article class="seg reveal" data-reveal>
+          <p class="seg__n mono">02</p>
+          <h3 class="seg__h">New homeowners &amp; renters</h3>
+          <p class="seg__p">Find out the wardrobe blocks the radiator before you pay for delivery.
+            Bring the furniture you're keeping and design around it honestly.</p>
+          <p class="seg__tag mono">RETURNS AVOIDED · MANY</p>
+        </article>
+        <article class="seg reveal" data-reveal>
+          <p class="seg__n mono">03</p>
+          <h3 class="seg__h">Students</h3>
+          <p class="seg__p">Small rooms, immovable radiators, a landlord's rules and no budget.
+            Free tier covers a room, the catalog and three AI layouts.</p>
+          <p class="seg__tag mono">FREE TIER · 1 ROOM</p>
+        </article>
+        <article class="seg reveal" data-reveal>
+          <p class="seg__n mono">04</p>
+          <h3 class="seg__h">Hospitality &amp; commercial</h3>
+          <p class="seg__p">Multi-room portfolios, repeatable room types and FF&amp;E schedules that
+            procurement will actually accept. Team seats and an API.</p>
+          <p class="seg__tag mono">PORTFOLIOS · FF&amp;E · API</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 8 · ACCORDION PROPOSITIONS (motion 6) ═════════════════════════ -->
+  <section class="band band--tight" id="props" aria-labelledby="props-h">
+    <div class="shell shell--narrow">
+      <header class="sec-head reveal" data-reveal>
+        <p class="eyebrow">What we actually promise</p>
+        <h2 class="h-sec" id="props-h">Four commitments, stated <em>plainly</em>.</h2>
+      </header>
+
+      <div class="acc" data-accordion>
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h">
+            <button class="acc__btn" type="button" id="acc-b1" aria-expanded="true" aria-controls="acc-p1">
+              <span class="acc__i mono">01</span>
+              <span class="acc__label">Dimensional truth</span>
+              <span class="acc__chev" aria-hidden="true"></span>
+            </button>
+          </h3>
+          <div class="acc__panel" id="acc-p1" role="region" aria-labelledby="acc-b1">
+            <div class="acc__inner">
+              <p>Everything is stored as integer millimetres — room shell, openings, furniture,
+                offsets. We never round to make a layout work. If your 2180mm sofa does not fit a
+                2100mm alcove, you get a violation with the exact overlap, not a smaller sofa.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h">
+            <button class="acc__btn" type="button" id="acc-b2" aria-expanded="false" aria-controls="acc-p2">
+              <span class="acc__i mono">02</span>
+              <span class="acc__label">AI that respects clearances</span>
+              <span class="acc__chev" aria-hidden="true"></span>
+            </button>
+          </h3>
+          <div class="acc__panel" id="acc-p2" role="region" aria-labelledby="acc-b2">
+            <div class="acc__inner">
+              <p>The layout solver treats circulation width, door swing arcs, drawer pull-out and
+                seated sightlines as constraints — not suggestions. Candidates that break them are
+                scored down or rejected outright, and you can see which rule failed and by how much.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h">
+            <button class="acc__btn" type="button" id="acc-b3" aria-expanded="false" aria-controls="acc-p3">
+              <span class="acc__i mono">03</span>
+              <span class="acc__label">Your furniture, not a stock render</span>
+              <span class="acc__chev" aria-hidden="true"></span>
+            </button>
+          </h3>
+          <div class="acc__panel" id="acc-p3" role="region" aria-labelledby="acc-b3">
+            <div class="acc__inner">
+              <p>Most people are not starting from an empty room. Photograph what you own, we
+                measure it into the same coordinate space as the catalog, and the solver plans around
+                it. The inherited armchair is a first-class object, not something to design away.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h">
+            <button class="acc__btn" type="button" id="acc-b4" aria-expanded="false" aria-controls="acc-p4">
+              <span class="acc__i mono">04</span>
+              <span class="acc__label">Export that a contractor can read</span>
+              <span class="acc__chev" aria-hidden="true"></span>
+            </button>
+          </h3>
+          <div class="acc__panel" id="acc-p4" role="region" aria-labelledby="acc-b4">
+            <div class="acc__inner">
+              <p>A plan sheet with named furniture, dimension chains referenced from wall faces, a
+                scale bar and an FF&amp;E schedule with SKUs. Plus rendered views generated from the
+                same geometry, so the picture and the plan can never disagree.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 9 · CATALOG MARQUEE (motion 9) ════════════════════════════════ -->
+  <section class="marquee-band" aria-labelledby="marq-h">
+    <div class="shell">
+      <p class="eyebrow reveal" data-reveal id="marq-h">In the catalog · width×depth×height in mm</p>
+    </div>
+    <div class="marquee" data-marquee>
+      <div class="marquee__track" data-marquee-track>
+        <ul class="marquee__row" data-marquee-row>
+          <li><b>EKTORP</b><span class="mono">2180×880×880</span></li>
+          <li><b>LISABO</b><span class="mono">1400×780×740</span></li>
+          <li><b>BILLY</b><span class="mono">800×280×2020</span></li>
+          <li><b>MALM</b><span class="mono">1600×2090×380</span></li>
+          <li><b>PAX</b><span class="mono">1500×580×2360</span></li>
+          <li><b>POÄNG</b><span class="mono">680×820×1000</span></li>
+          <li><b>KALLAX</b><span class="mono">1470×390×1470</span></li>
+          <li><b>HEMNES</b><span class="mono">1080×370×1970</span></li>
+          <li><b>SÖDERHAMN</b><span class="mono">2410×990×830</span></li>
+          <li><b>NORDEN</b><span class="mono">2200×900×750</span></li>
+          <li><b>BESTÅ</b><span class="mono">1800×420×640</span></li>
+          <li><b>VIMLE</b><span class="mono">2520×980×830</span></li>
+        </ul>
+      </div>
+    </div>
+    <div class="marquee marquee--rev" data-marquee>
+      <div class="marquee__track" data-marquee-track>
+        <ul class="marquee__row" data-marquee-row>
+          <li><b>STRANDMON</b><span class="mono">820×960×1010</span></li>
+          <li><b>IVAR</b><span class="mono">890×300×1790</span></li>
+          <li><b>FRIHETEN</b><span class="mono">2300×1510×660</span></li>
+          <li><b>NORDLI</b><span class="mono">1600×2000×470</span></li>
+          <li><b>LACK</b><span class="mono">550×550×450</span></li>
+          <li><b>BRIMNES</b><span class="mono">1400×2060×470</span></li>
+          <li><b>EKENÄSET</b><span class="mono">1660×840×780</span></li>
+          <li><b>TROFAST</b><span class="mono">990×440×940</span></li>
+          <li><b>SKOGSTA</b><span class="mono">2350×1000×750</span></li>
+          <li><b>LANDSKRONA</b><span class="mono">2040×890×780</span></li>
+          <li><b>GLADOM</b><span class="mono">450×450×530</span></li>
+          <li><b>HAUGA</b><span class="mono">1050×450×1160</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 10 · PRICING ══════════════════════════════════════════════════ -->
+  <section class="band" id="pricing" aria-labelledby="pricing-h">
+    <div class="shell">
+      <header class="sec-head reveal" data-reveal>
+        <p class="eyebrow">Pricing</p>
+        <h2 class="h-sec" id="pricing-h">Start free. Pay when it starts <em>shipping</em>.</h2>
+      </header>
+
+      <div class="plans">
+        <article class="plan reveal" data-reveal>
+          <p class="plan__name">Free</p>
+          <p class="plan__price mono">$0<span>/mo</span></p>
+          <p class="plan__for">For one room and one good decision.</p>
+          <ul class="plan__list">
+            <li>1 room</li>
+            <li>Full catalog access</li>
+            <li>3 AI layouts</li>
+            <li>3D editor with collision feedback</li>
+            <li>Watermarked plan preview</li>
+          </ul>
+          <a class="btn btn--ghost btn--block" href="editor.html" data-magnetic>
+            <span class="btn__slide"><span class="btn__t">Open the studio</span><span class="btn__t" aria-hidden="true">Open the studio</span></span>
+          </a>
+        </article>
+
+        <article class="plan plan--feat reveal" data-reveal>
+          <p class="plan__badge mono">MOST CHOSEN</p>
+          <p class="plan__name">Pro</p>
+          <p class="plan__price mono">$18<span>/mo</span></p>
+          <p class="plan__for">For the whole home, and the furniture you already own.</p>
+          <ul class="plan__list">
+            <li>Unlimited rooms</li>
+            <li>Own-furniture capture</li>
+            <li>Blueprint export (plan + dimension chains)</li>
+            <li>Unlimited AI layouts and re-rolls</li>
+            <li>Rendered views, no watermark</li>
+          </ul>
+          <a class="btn btn--clay btn--block" href="editor.html" data-magnetic>
+            <span class="btn__slide"><span class="btn__t">Start Pro</span><span class="btn__t" aria-hidden="true">Start Pro</span></span>
+          </a>
+        </article>
+
+        <article class="plan reveal" data-reveal>
+          <p class="plan__name">Studio</p>
+          <p class="plan__price mono">$79<span>/seat</span></p>
+          <p class="plan__for">For portfolios, procurement and people with clients.</p>
+          <ul class="plan__list">
+            <li>Multi-room portfolios</li>
+            <li>FF&amp;E schedules (CSV / XLSX)</li>
+            <li>Team seats and shared catalogs</li>
+            <li>API access</li>
+            <li>Priority reconstruction queue</li>
+          </ul>
+          <a class="btn btn--ghost btn--block" href="editor.html" data-magnetic>
+            <span class="btn__slide"><span class="btn__t">Talk to us</span><span class="btn__t" aria-hidden="true">Talk to us</span></span>
+          </a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 11 · FAQ ══════════════════════════════════════════════════════ -->
+  <section class="band band--tight" id="faq" aria-labelledby="faq-h">
+    <div class="shell shell--narrow">
+      <header class="sec-head reveal" data-reveal>
+        <p class="eyebrow">FAQ</p>
+        <h2 class="h-sec" id="faq-h">The questions people <em>actually</em> ask.</h2>
+      </header>
+
+      <div class="acc acc--faq" data-accordion>
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h"><button class="acc__btn" type="button" id="faq-b1" aria-expanded="false" aria-controls="faq-p1">
+            <span class="acc__label">How accurate is a phone capture, really?</span><span class="acc__chev" aria-hidden="true"></span></button></h3>
+          <div class="acc__panel" id="faq-p1" role="region" aria-labelledby="faq-b1"><div class="acc__inner">
+            <p>Median wall-length error is around ±12mm on a clean 12-photo sweep of a rectangular
+              room. Cluttered corners, mirrors and very dark rooms are worse. That is why every wall
+              length stays editable after reconstruction — if you have a laser measure, your number
+              wins.</p></div></div>
+        </div>
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h"><button class="acc__btn" type="button" id="faq-b2" aria-expanded="false" aria-controls="faq-p2">
+            <span class="acc__label">Do I need a phone, or can I do this on a laptop?</span><span class="acc__chev" aria-hidden="true"></span></button></h3>
+          <div class="acc__panel" id="faq-p2" role="region" aria-labelledby="faq-b2"><div class="acc__inner">
+            <p>Either. Drag existing photos or a dimensioned floor plan straight into the desktop
+              app. If you want to walk the room instead, scan the QR code and your phone joins the
+              same session — captures appear on the desktop as you take them.</p></div></div>
+        </div>
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h"><button class="acc__btn" type="button" id="faq-b3" aria-expanded="false" aria-controls="faq-p3">
+            <span class="acc__label">Is this just an image generator with extra steps?</span><span class="acc__chev" aria-hidden="true"></span></button></h3>
+          <div class="acc__panel" id="faq-p3" role="region" aria-labelledby="faq-b3"><div class="acc__inner">
+            <p>No. The primary artefact is geometry, not pixels. You get a 3D scene of real products
+              at real sizes that you can drag, rotate and export. Renders are produced <em>from</em>
+              that geometry, which is why the picture and the plan always agree.</p></div></div>
+        </div>
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h"><button class="acc__btn" type="button" id="faq-b4" aria-expanded="false" aria-controls="faq-p4">
+            <span class="acc__label">What if my furniture isn't in the catalog?</span><span class="acc__chev" aria-hidden="true"></span></button></h3>
+          <div class="acc__panel" id="faq-p4" role="region" aria-labelledby="faq-b4"><div class="acc__inner">
+            <p>Photograph it. We derive a dimensioned proxy solid — bounding box plus a coarse shape
+              — which is everything the collision and clearance checks need. You can override any
+              dimension by hand, and the item is reusable across every room in your account.</p></div></div>
+        </div>
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h"><button class="acc__btn" type="button" id="faq-b5" aria-expanded="false" aria-controls="faq-p5">
+            <span class="acc__label">Can a contractor or stager actually use the export?</span><span class="acc__chev" aria-hidden="true"></span></button></h3>
+          <div class="acc__panel" id="faq-p5" role="region" aria-labelledby="faq-b5"><div class="acc__inner">
+            <p>That is the point. The plan sheet carries tagged furniture, dimension chains
+              referenced from wall faces, a scale bar and an FF&amp;E schedule with SKUs and
+              quantities. Metric or imperial on output. No proprietary viewer required.</p></div></div>
+        </div>
+        <div class="acc__item reveal" data-reveal>
+          <h3 class="acc__h"><button class="acc__btn" type="button" id="faq-b6" aria-expanded="false" aria-controls="faq-p6">
+            <span class="acc__label">What does the free tier not include?</span><span class="acc__chev" aria-hidden="true"></span></button></h3>
+          <div class="acc__panel" id="faq-p6" role="region" aria-labelledby="faq-b6"><div class="acc__inner">
+            <p>Free gives you one room, the full catalog and three AI layouts — enough to answer a
+              real question. It does not include own-furniture capture, unmarked blueprint export or
+              multi-room portfolios. Placing catalog furniture never costs a credit on any tier.</p></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ CTA STRIP ══════════════════════════════════════════════════════ -->
+  <section class="cta-strip" aria-labelledby="cta-h">
+    <div class="shell">
+      <div class="cta-strip__in reveal" data-reveal>
+        <h2 class="h-sec" id="cta-h">Measure once. Design <em>honestly</em>.</h2>
+        <a class="btn btn--clay btn--lg" href="editor.html" data-magnetic>
+          <span class="btn__slide"><span class="btn__t">Open the studio</span><span class="btn__t" aria-hidden="true">Open the studio</span></span>
+        </a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ══ 12 · FOOTER INTERACTION (motion 8) ══════════════════════════════ -->
+<footer class="foot" data-footer>
+  <canvas class="foot__dots" data-dot-canvas aria-hidden="true"></canvas>
+  <div class="shell foot__inner">
+    <div class="foot__cols">
+      <div class="foot__col">
+        <p class="eyebrow">ainterior</p>
+        <p class="foot__blurb">A manipulable 3D space with real furniture at real dimensions, and AI
+          that respects the tape measure.</p>
+      </div>
+      <nav class="foot__col" aria-label="Product">
+        <p class="eyebrow">Product</p>
+        <a href="editor.html">Open the studio</a>
+        <a href="#chapters">How it works</a>
+        <a href="#pricing">Pricing</a>
+      </nav>
+      <nav class="foot__col" aria-label="Company">
+        <p class="eyebrow">Company</p>
+        <a href="#versus">Why us</a>
+        <a href="#segments">Who it's for</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="foot__col">
+        <p class="eyebrow">Units</p>
+        <p class="mono foot__mono">STORAGE · mm (int)</p>
+        <p class="mono foot__mono">DISPLAY · metric / imperial</p>
+        <p class="mono foot__mono">SCENE · metres (float)</p>
+      </div>
+    </div>
+
+    <div class="foot__wordmark" data-foot-word aria-hidden="true">ainterior</div>
+
+    <div class="foot__base">
+      <p class="mono">© 2026 ainterior — dimensionally honest interiors</p>
+      <p class="mono">BUILD A · v1</p>
+    </div>
+  </div>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
