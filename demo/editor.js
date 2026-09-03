@@ -2,6 +2,17 @@
 import { createEditor, fmtLen } from '../packages/three-editor/editor.js';
 import { SAMPLE_CATALOG } from './sample-catalog.js';
 import { CATALOG_DATA } from './catalog-data.js';
+// Product thumbnails (#6). Rendered from each item's proxy geometry and shipped as
+// data URIs in an ES module rather than loose PNGs, because the demo must also run
+// from file:// where fetch() of local files is blocked. Imported defensively so a
+// missing module degrades to the colour swatch instead of breaking the studio.
+let THUMBS = {};
+try {
+  const m = await import('../packages/catalog/thumbs.js');
+  THUMBS = (m && (m.THUMBS || m.default)) || {};
+} catch (e) {
+  console.warn('[demo] catalog thumbnails unavailable, falling back to swatches', e);
+}
 
 // ---------------------------------------------------------------------------
 // CATALOG — swap point.
@@ -21,7 +32,7 @@ async function loadCatalog() {
 // ---------------------------------------------------------------------------
 // ROOM — 4.2 x 3.6m living room with a door and a window (SPEC §4.4)
 // ---------------------------------------------------------------------------
-const ROOM = {
+const DEMO_ROOM = {
   id: 'room_demo', name: 'Living room',
   polygon_mm: [[0, 0], [4600, 0], [4600, 3800], [0, 3800]],
   height_mm: 2600,
@@ -34,6 +45,61 @@ const ROOM = {
   ],
   source: 'manual', confidence: 1,
 };
+
+// ---------------------------------------------------------------------------
+// Floorplan handoff (#1) — packages/floorplan/README.md defines the contract:
+// demo/design.html writes localStorage['ainterior.floorplan.handoff'] and
+// navigates to editor.html?plan=handoff. `payload.shell` is what we render.
+// ---------------------------------------------------------------------------
+const HANDOFF_KEY = 'ainterior.floorplan.handoff';
+let PLAN = null;          // the full handoff payload when we arrived from the designer
+let ROOM = DEMO_ROOM;
+
+function readHandoffPlan() {
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('plan') !== 'handoff') return null;
+    const raw = localStorage.getItem(HANDOFF_KEY);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    if (!payload || !payload.shell || !Array.isArray(payload.shell.polygon_mm)) return null;
+    if (payload.shell.polygon_mm.length < 3) return null;
+    return payload;
+  } catch (e) {
+    console.warn('[demo] floorplan handoff unreadable, using the demo room', e);
+    return null;
+  }
+}
+
+/** shell (floorplanToShell) -> the Room shape the editor consumes (SPEC §4.4 + §G2). */
+function shellToRoom(shell) {
+  return {
+    id: shell.id || 'plan',
+    name: shell.name || 'Floorplan',
+    polygon_mm: shell.polygon_mm,
+    holes_mm: shell.holes_mm || [],
+    height_mm: shell.height_mm || 2600,
+    wall_thickness_mm: shell.wall_thickness_mm,
+    openings: shell.openings || [],
+    features: shell.features || [],
+    interior_walls: shell.interior_walls || [],
+    rooms: shell.rooms || [],
+    source: shell.source || 'manual',
+    confidence: shell.confidence != null ? shell.confidence : 1,
+  };
+}
+
+/** brief -> the {item_id, qty} list solveLayouts expects, flattened across rooms. */
+function briefToItems(brief) {
+  const tally = new Map();
+  for (const entry of brief || []) {
+    for (const it of (entry.items || [])) {
+      if (!it || !it.item_id) continue;
+      tally.set(it.item_id, (tally.get(it.item_id) || 0) + Math.max(1, it.qty || 1));
+    }
+  }
+  return [...tally].map(([item_id, qty]) => ({ item_id, qty }));
+}
 
 // ---------------------------------------------------------------------------
 // optional layout engine (SPEC §5.1) — never hard-fail if absent
@@ -132,6 +198,13 @@ let engineName = '—';
 
 (async function main() {
   const [{ items, source }, eName] = await Promise.all([loadCatalog(), loadEngine()]);
+
+  PLAN = readHandoffPlan();
+  if (PLAN) {
+    ROOM = shellToRoom(PLAN.shell);
+    console.info(`[demo] loaded floorplan "${ROOM.name}" — `
+      + `${(ROOM.rooms || []).length} room(s), ${(ROOM.interior_walls || []).length} interior wall(s)`);
+  }
   CATALOG = items;
   catMap = new Map(items.map((i) => [i.id, i]));
   engineName = eName;
@@ -192,6 +265,20 @@ let engineName = '—';
 })();
 
 function seedStartingLayout() {
+  // Arrived from the floorplan designer: honour the furniture the user actually
+  // chose, rather than the hand-authored demo scene.
+  if (PLAN) {
+    const items = briefToItems(PLAN.brief);
+    if (items.length) { applyAiLayout(items, 1, 'use-mine'); return; }
+    // a plan with no brief: leave the space empty so the user starts clean
+    editor.setLayout({
+      id: 'layout_empty', seed: 1, mode: 'use-mine', style: 'neutral', score: 0,
+      placements: [], rationale: ['Empty plan — add furniture from the catalog.'],
+      violations: [], metrics: {},
+    });
+    editor.select(null); editor.clearHistory();
+    return;
+  }
   // Hand-authored reference layout for the 4.6 x 3.8m demo room. Wall indices:
   // 0 = y=0 (door), 1 = x=4600, 2 = y=3800 (window + radiator), 3 = x=0.
   const authored = [
@@ -342,10 +429,17 @@ function renderCatalog() {
     btn.setAttribute('role', 'listitem');
     const hex = (it.colorways && it.colorways[0] && it.colorways[0].hex) || '#888';
     const d = it.dims_mm;
+    const thumb = THUMBS[it.id];
     btn.innerHTML =
-      `<span class="nm"><span class="sw" style="background:${hex}"></span>${it.brand} ${it.name}</span>` +
+      (thumb
+        ? `<span class="cat-thumb" style="background-image:url('${thumb}')" aria-hidden="true"></span>`
+        : `<span class="cat-thumb" style="background:${hex}" aria-hidden="true"></span>`) +
+      `<span class="cat-body">` +
+      `<span class="nm"><span class="sw" style="background:${hex}"></span>` +
+      `<span>${it.brand} ${it.name}</span></span>` +
       `<span class="dm">${fmtLen(d.w, unit)} × ${fmtLen(d.d, unit)} × ${fmtLen(d.h, unit)}</span>` +
-      `<span class="ty">${it.product_type || it.archetype}</span>`;
+      `<span class="ty">${it.product_type || it.archetype}</span>` +
+      `</span>`;
     btn.title = `${it.archetype} · add to room`;
     btn.onclick = () => editor && editor.add(it.id);
     list.appendChild(btn);
@@ -593,3 +687,168 @@ function wireTopbar() {
 
   syncHistoryButtons();
 }
+
+// ---------------------------------------------------------------------------
+// Resizable side panels (#5)
+// ---------------------------------------------------------------------------
+// `.main` is a 5-column grid whose outer track widths come from CSS custom
+// properties, so dragging only writes a variable — no layout thrash, and the
+// 3D viewport resizes through its own ResizeObserver.
+(function initPanelResize() {
+  const root = document.documentElement;
+  const LIMITS = { l: [190, 560], r: [200, 560] };
+  const KEY = 'ainterior.studio.panels';
+
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { saved = {}; }
+  const clamp = (side, px) => Math.max(LIMITS[side][0], Math.min(LIMITS[side][1], px));
+  const apply = (side, px) => root.style.setProperty(side === 'l' ? '--panel-l' : '--panel-r', `${Math.round(px)}px`);
+  if (Number.isFinite(saved.l)) apply('l', clamp('l', saved.l));
+  if (Number.isFinite(saved.r)) apply('r', clamp('r', saved.r));
+
+  const persist = () => {
+    const cs = getComputedStyle(root);
+    const out = {
+      l: parseFloat(cs.getPropertyValue('--panel-l')) || undefined,
+      r: parseFloat(cs.getPropertyValue('--panel-r')) || undefined,
+    };
+    try { localStorage.setItem(KEY, JSON.stringify(out)); } catch (e) { /* private mode */ }
+  };
+
+  function wire(id, side) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const panel = document.querySelector(side === 'l' ? '.panel-left' : '.panel-right');
+
+    el.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      const startX = ev.clientX;
+      const startW = panel ? panel.getBoundingClientRect().width : 260;
+      el.setPointerCapture(ev.pointerId);
+      el.classList.add('is-dragging');
+      document.body.classList.add('is-resizing');
+
+      const move = (e) => {
+        // left panel grows with +dx, right panel grows with -dx
+        const dx = e.clientX - startX;
+        apply(side, clamp(side, startW + (side === 'l' ? dx : -dx)));
+      };
+      const up = () => {
+        el.releasePointerCapture(ev.pointerId);
+        el.classList.remove('is-dragging');
+        document.body.classList.remove('is-resizing');
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+        el.removeEventListener('lostpointercapture', up);
+        persist();
+        window.dispatchEvent(new Event('resize'));   // nudge the viewport observer
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+      el.addEventListener('lostpointercapture', up);
+    });
+
+    // keyboard-accessible resize
+    el.addEventListener('keydown', (ev) => {
+      const step = ev.shiftKey ? 40 : 12;
+      let dir = 0;
+      if (ev.key === 'ArrowLeft') dir = -1;
+      else if (ev.key === 'ArrowRight') dir = 1;
+      else return;
+      ev.preventDefault();
+      const cur = panel ? panel.getBoundingClientRect().width : 260;
+      apply(side, clamp(side, cur + (side === 'l' ? dir * step : -dir * step)));
+      persist();
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
+
+  wire('resizeL', 'l');
+  wire('resizeR', 'r');
+}());
+
+// ---------------------------------------------------------------------------
+// Adaptive graphics quality (#11 support)
+// ---------------------------------------------------------------------------
+// The realism layer (PBR maps + IBL environment + soft shadows) costs roughly
+// 5x the frame time of flat materials. Measured in this sandbox's software
+// rasteriser: 0.39fps full / 0.91 without the environment / 2.04 with neither /
+// 6.07 at half resolution — while the JavaScript per-frame work is only ~7ms.
+// On a real GPU none of that matters, but we cannot assume one, so measure the
+// machine we actually landed on and step down if it can't keep up.
+(function initQuality() {
+  const KEY = 'ainterior.studio.quality';
+  const seg = document.getElementById('qualSeg');
+  if (!seg) return;
+
+  const mark = (q) => {
+    for (const b of seg.querySelectorAll('button')) {
+      const on = b.dataset.q === q;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+  };
+
+  let pref = 'auto';
+  try { pref = localStorage.getItem(KEY) || 'auto'; } catch (e) { /* private mode */ }
+  mark(pref);
+
+  const apply = (tier) => {
+    if (!editor || !editor.setQualityTier) return;
+    editor.setQualityTier(tier);
+    const el = document.getElementById('engineInfo');
+    if (el && !/gfx/.test(el.textContent || '')) el.textContent += ` · gfx: ${tier}`;
+    else if (el) el.textContent = el.textContent.replace(/gfx: \w+/, `gfx: ${tier}`);
+  };
+
+  /**
+   * Sample real frame pacing. Bounded by TIME, not by a frame count: a
+   * frame-counted probe is a trap on exactly the machines it exists to detect —
+   * waiting for 22 frames at 0.4fps takes ~55 seconds, so the probe never
+   * returned and the tier never dropped. A slow machine now reports slow within
+   * one budget window.
+   */
+  function measure(budgetMs = 700) {
+    return new Promise((res) => {
+      let n = 0;
+      const t0 = performance.now();
+      const step = () => {
+        n += 1;
+        const elapsed = performance.now() - t0;
+        if (elapsed < budgetMs && n < 60) requestAnimationFrame(step);
+        else res((1000 * n) / Math.max(1, elapsed));
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  async function auto() {
+    const high = await measure();
+    if (high >= 24) { apply('high'); return; }
+    apply('medium');
+    const med = await measure();
+    if (med >= 20) return;
+    apply('low');
+  }
+
+  const run = () => { if (pref === 'auto') auto(); else apply(pref); };
+  // let the first frames settle (shader compile, texture upload) before judging
+  if (document.body.dataset.ready === '1') setTimeout(run, 900);
+  else {
+    const t = setInterval(() => {
+      if (document.body.dataset.ready === '1') { clearInterval(t); setTimeout(run, 900); }
+    }, 200);
+  }
+
+  seg.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-q]');
+    if (!b) return;
+    pref = b.dataset.q;
+    mark(pref);
+    try { localStorage.setItem(KEY, pref); } catch (e) { /* private mode */ }
+    if (pref === 'auto') auto(); else apply(pref);
+  });
+}());

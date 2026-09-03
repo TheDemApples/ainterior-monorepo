@@ -6,7 +6,10 @@ The product's core claim is *real furniture at real dimensions*, so this package
 be honest about what it knows and explicit about what it doesn't.
 
 ```
-catalog.json            { version: 1, items: CatalogItem[] }   — 201 items
+catalog.json            { version: 1, items: CatalogItem[] }   — 284 items
+thumbs/{id}.png         192×192 transparent isometric thumbnail, one per item (SPEC2 §I1)
+thumbs.js               ES module: THUMBS[id] = data:image/png;base64,…  (file://-safe)
+thumbs_grid_48.png      every thumbnail at 48×48 — the list-row legibility check
 schema.json             strict JSON Schema (draft-07) for CatalogItem
 archetypes.json         archetype → clearances, placement defaults, layout hints, sanity envelopes
 seed.sql                idempotent upsert into public.catalog_items (SPEC §6)
@@ -18,6 +21,9 @@ tools/archetypes_data.py per-archetype defaults + dims sanity envelopes
 tools/proxy_builders.py  primitive-proxy geometry, one builder per archetype
 tools/gen_catalog.py     emits catalog.json / schema.json / archetypes.json / seed.sql
 tools/contact_sheet.py   hand-rolled isometric rasteriser (PIL, no browser)
+tools/ai_items_data.py   ainterior generic defaults table (SPEC2 §I2), dict records
+tools/ai_proxy_builders.py geometry for the generics, incl. image_slot apertures (§G3)
+tools/gen_thumbs.py      renders thumbs/*.png + thumbs.js (same camera as contact_sheet)
 ```
 
 ## Regenerate & verify
@@ -26,6 +32,7 @@ tools/contact_sheet.py   hand-rolled isometric rasteriser (PIL, no browser)
 python3 tools/gen_catalog.py        # rebuild the four data artifacts
 node importer/validate.js           # must exit 0 with 0 errors
 python3 tools/contact_sheet.py      # rebuild contact_sheet.png, then LOOK at it
+python3 tools/gen_thumbs.py --grid 48   # rebuild thumbs/, thumbs.js and the 48px grid
 ```
 
 `catalog.json`, `schema.json`, `archetypes.json` and `seed.sql` are **generated**. Edit the
@@ -37,7 +44,7 @@ Python tables in `tools/`, never the JSON.
 
 | | |
 |---|---|
-| Items | **201** (198 IKEA + 3 generic TV envelopes) |
+| Items | **284** (198 IKEA + 3 generic TV envelopes + 83 ainterior generics) |
 | Archetypes covered | **44 / 44** of the SPEC §4.3 closed set |
 | Categories | seating 43 · storage 48 · tables 29 · lighting 18 · decor 18 · beds 13 · desks 12 · rugs 10 · kids 8 · outdoor 2 |
 | Proxy primitives | 1,703 (avg **8.5** per item, max 25) |
@@ -359,3 +366,69 @@ The `id` from `catalog.json` maps to the `slug` column; the table's own `id` is 
     back, TÄRNÖ's folding geometry) are approximated as orthogonal masses. Silhouettes read
     correctly at editor scale; they are not accurate at close range.
 12. **Single locale.** US sizing and USD pricing only; no EU/UK size or currency variants.
+
+
+---
+
+## Thumbnails (SPEC2 §I1)
+
+`tools/gen_thumbs.py` rasterises every item's `proxy` through the *same* projector, camera and
+light as `contact_sheet.py` — 30° isometric, light from +x/+y/+z — so the whole set reads as one
+family. Each tile is 192×192, transparent, the item scaled to span 86% of the tile, with a soft
+blurred ground-shadow ellipse computed from the footprint (`w × d`), not from the primitives, so
+tall thin items still sit on the floor rather than float.
+
+Two outputs, deliberately:
+
+| Output | Consumer |
+|---|---|
+| `thumbs/{id}.png` | the repo, code review, the docs |
+| `thumbs.js` (`export const THUMBS`) | the browser list — the demo runs from `file://`, where `fetch()` of local files is blocked, so the data URIs must be inlined in a module |
+
+PNGs are octree-quantised to 47 colours + a dedicated transparent index. That keeps every tile
+**under 4 KB** (avg ≈2.3 KB, max 3.9 KB), well inside the 8 KB hard cap; the whole module is
+**≈894 KB** for 284 items. Anything that only reads at 192px is a failure — the list row is
+48×48, which is what `thumbs_grid_48.png` exists to check.
+
+## ainterior generic defaults (SPEC2 §I2)
+
+83 items, `brand: "ainterior"`, ids prefixed `ai-`, all `dims_confidence: "high"` — these are
+published standard sizes (ISO 216 A-series, US frame sizes, standard appliance envelopes), not
+scraped guesses, so "high" is honest here in a way it isn't for a scraped product page.
+
+- **Posters & frames (25 items, 27 `image_slot` parts).** A4/A3/A2/A1/A0 and US 8×10, 11×14,
+  16×20, 18×24, 24×36 plus 12×12 square, each framed *and* unframed; two gallery-wrapped canvases;
+  one three-panel triptych (three independent slots). The framed variants carry the frame profile
+  and mount inset in their outside dimensions, and the `image_slot` part is sized to the **visible
+  aperture** — inside the profile *and* inside the matting — so a photo textured onto it lands
+  exactly where the mount opening is.
+- **Generic furniture (20):** floor/wall mirror, wall clock, floor cushion, bean bag, laundry
+  hamper, drying rack, ironing board, moving boxes S/M/L, fabric bin + 60L tote, shoe rack, coat
+  stand, umbrella stand, pedal bin, radiator cover, curtain rod, roller blind, door mat.
+- **Tech & appliance envelopes (18):** 24/27/32″ monitors, monitor arm, tower PC, printer, router,
+  desk lamp, space heater, pedestal + tower fan, air purifier, humidifier, mini fridge, microwave,
+  kettle, robot vacuum + dock.
+- **Life stuff (20):** houseplants S/M/L/hanging, yoga mat, dumbbell rack, bike (floor + wall),
+  guitar stand, keyboard stand, pet bed, hooded litter box, cat tree, whiteboard, corkboard,
+  string lights, standing-desk converter, folding chair, folding table.
+
+`price_usd` is `null` where a price is genuinely meaningless (the two bikes; the vacuum dock that
+ships with the vacuum).
+
+### Archetypes added to the SPEC §4.3 closed set
+
+Seven, each because the existing set had no home with the right layout semantics:
+
+| New archetype | Covers | Why not an existing one |
+|---|---|---|
+| `monitor` | 24/27/32″ screens, monitor arm | `tv` is a wall/bench object 700mm+ wide with TV clearances; a monitor lives on a desk |
+| `appliance` | tower PC, printer, router, heater, fans, purifier, humidifier, mini fridge, microwave, kettle, robot vac + dock | nothing in §4.3 describes a powered box that sits on a counter or against a wall |
+| `rack` | drying rack, ironing board, dumbbell rack, coat stand, guitar/keyboard stand, cat tree, desk riser | open floor frames, not `shelf_unit` cabinetry |
+| `cushion` | floor cushion, bean bag, pet bed | `ottoman` mandates a 300–520mm seat height |
+| `bike` | bike floor + wall mount | long, thin, wall-hugging, sometimes wall-*mounted* |
+| `curtain_rod` | curtain rod | `curtain` is a 1200mm+ fabric drop; a rod is 70–120mm tall |
+| `string_lights` | festoon lights | ceiling-hung catenary, not a `pendant_lamp` |
+
+Two existing sanity envelopes were widened (loosened only, no existing item moved):
+`storage_box` w/d 700→800, h 450→**700** (hampers, pedal bins, umbrella stands) and
+`rug` w-min 500→450, d-min 700→**400** (door mats).
