@@ -21,7 +21,7 @@ function t(name, fn) {
 }
 function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
 
-const ARCHETYPES = new Set(['sofa_2seat','sofa_3seat','sofa_sectional_l','loveseat','armchair','ottoman','bench','chaise','dining_chair','office_chair','stool','bar_stool','bed_single','bed_double','bed_queen','bed_king','crib','nightstand','dresser','wardrobe','bookcase','shelf_unit','sideboard','cabinet','tv_bench','storage_box','coffee_table','side_table','dining_table_rect','dining_table_round','desk','console_table','kitchen_island','rug','floor_lamp','table_lamp','pendant_lamp','wall_lamp','tv','art_frame','mirror','plant','curtain','wall_shelf']);
+const ARCHETYPES = new Set(['sofa_2seat','sofa_3seat','sofa_sectional_l','loveseat','armchair','ottoman','bench','chaise','dining_chair','office_chair','stool','bar_stool','bed_single','bed_double','bed_queen','bed_king','crib','nightstand','dresser','wardrobe','bookcase','shelf_unit','sideboard','cabinet','tv_bench','storage_box','coffee_table','side_table','dining_table_rect','dining_table_round','desk','console_table','kitchen_island','rug','floor_lamp','table_lamp','pendant_lamp','wall_lamp','tv','art_frame','mirror','plant','curtain','wall_shelf','monitor','appliance','rack','cushion','bike','curtain_rod','string_lights']);
 
 const LIVING = {
   id: 'r_living', name: 'Living room',
@@ -213,7 +213,7 @@ t('candidates are sorted by score descending', () => {
 });
 
 // ---- 6. stress: every catalog item must be placeable & renderable ---------
-t('every one of the 201 catalog items solves+renders without throwing', () => {
+t(`every one of the ${items.length} catalog items solves+renders without throwing`, () => {
   const bad = [];
   const BIG = { ...LIVING, polygon_mm: [[0,0],[8000,0],[8000,7000],[0,7000]] };
   for (const it of items) {
