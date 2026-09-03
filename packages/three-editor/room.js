@@ -302,9 +302,142 @@ export function buildRoom(room, mats, opts = {}) {
     group.add(m);
   }
 
+  // ---------------- interior walls (SPEC2 §G2) ----------------
+  // Multi-room floorplans from packages/floorplan emit one `interior_wall` per
+  // shared room edge. Without this the studio drew only the outer envelope, so a
+  // 2-bed apartment rendered as a single empty box. Interior walls are centred on
+  // their edge (exterior walls sit offset outward by T/2) and get baseboards on
+  // both faces.
+  for (const iw of (room.interior_walls || [])) {
+    if (!iw || !Array.isArray(iw.a) || !Array.isArray(iw.b)) continue;
+    const len = Math.hypot(iw.b[0] - iw.a[0], iw.b[1] - iw.a[1]);
+    if (len < 1) continue;
+    const u = [(iw.b[0] - iw.a[0]) / len, (iw.b[1] - iw.a[1]) / len];
+    const n = [-u[1], u[0]];
+    const angle = Math.atan2(u[1], u[0]);
+    const iT = iw.thickness_mm || Math.max(60, Math.round(T * 0.55));
+
+    const wallGroup = new THREE.Group();
+    wallGroup.name = 'interior-wall-' + (iw.id || walls.length);
+    const wallMat = mats.shell.wall.clone();
+    wallMat.transparent = true;
+
+    const mine = (iw.openings || [])
+      .map((o) => ({
+        ...o,
+        s0: Math.max(0, o.offset_mm || 0),
+        s1: Math.min(len, (o.offset_mm || 0) + (o.width_mm || 0)),
+        sill: Math.max(0, o.sill_mm || 0),
+        top: Math.min(H, (o.sill_mm || 0) + (o.height_mm || 0)),
+      }))
+      .filter((o) => o.s1 > o.s0)
+      .sort((x, y) => x.s0 - y.s0);
+
+    const addSlab = (s, l, zBot, zTop, mat) => {
+      if (l <= 1 || zTop - zBot <= 1) return;
+      const g = new THREE.BoxGeometry(l * MM, (zTop - zBot) * MM, iT * MM);
+      geoms.push(g);
+      const m = new THREE.Mesh(g, mat || wallMat);
+      const cs = s + l / 2;
+      m.position.copy(planToThree(
+        iw.a[0] + u[0] * cs, iw.a[1] + u[1] * cs, (zBot + zTop) / 2,
+      ));
+      m.rotation.y = angle;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      wallGroup.add(m);
+    };
+
+    let cursor = 0;
+    for (const o of mine) {
+      addSlab(cursor, o.s0 - cursor, 0, H);
+      if (o.sill > 1) addSlab(o.s0, o.s1 - o.s0, 0, o.sill, mats.shell.reveal);
+      if (o.top < H - 1) addSlab(o.s0, o.s1 - o.s0, o.top, H, mats.shell.reveal);
+      cursor = o.s1;
+    }
+    addSlab(cursor, len - cursor, 0, H);
+
+    // baseboards, both faces, skipping door runs
+    const doorRuns = mine.filter((o) => o.sill < 100);
+    for (const side of [1, -1]) {
+      let bc = 0;
+      const segs = [];
+      for (const o of doorRuns) { segs.push([bc, o.s0]); bc = o.s1; }
+      segs.push([bc, len]);
+      for (const [s, e] of segs) {
+        const l = e - s;
+        if (l <= 2) continue;
+        const g = new THREE.BoxGeometry(l * MM, BASEBOARD_H * MM, BASEBOARD_T * MM);
+        geoms.push(g);
+        const m = new THREE.Mesh(g, mats.shell.baseboard);
+        const cs = s + l / 2;
+        m.position.copy(planToThree(
+          iw.a[0] + u[0] * cs + n[0] * side * (iT / 2 + BASEBOARD_T / 2),
+          iw.a[1] + u[1] * cs + n[1] * side * (iT / 2 + BASEBOARD_T / 2),
+          BASEBOARD_H / 2,
+        ));
+        m.rotation.y = angle;
+        wallGroup.add(m);
+      }
+    }
+
+    // door swing arc on the floor, matching the exterior-wall treatment
+    for (const o of doorRuns) {
+      const r = o.s1 - o.s0;
+      const pts = [];
+      const hinge = [iw.a[0] + u[0] * o.s0, iw.a[1] + u[1] * o.s0];
+      for (let i = 0; i <= 16; i++) {
+        const t = (i / 16) * (Math.PI / 2);
+        pts.push(planToThree(
+          hinge[0] + u[0] * Math.cos(t) * r + n[0] * Math.sin(t) * r,
+          hinge[1] + u[1] * Math.cos(t) * r + n[1] * Math.sin(t) * r,
+          4,
+        ));
+      }
+      const ag = new THREE.BufferGeometry().setFromPoints(pts);
+      geoms.push(ag);
+      wallGroup.add(new THREE.Line(ag, mats.lineMat('#FFFFFF', 0.16)));
+    }
+
+    group.add(wallGroup);
+    const cs = len / 2;
+    walls.push({
+      index: walls.length,
+      origIndex: -1,
+      interior: true,
+      group: wallGroup,
+      frame: { a: iw.a, b: iw.b, u, nIn: n, nOut: [-n[0], -n[1]], len, angle },
+      material: wallMat,
+      centerThree: planToThree(iw.a[0] + u[0] * cs, iw.a[1] + u[1] * cs, H / 2),
+      normalThree: new THREE.Vector3(n[0], 0, -n[1]).normalize(),
+    });
+  }
+
+  // ---------------- per-room floor materials (SPEC2 §G2) ----------------
+  // Distinct flooring is what makes adjoining rooms read as separate spaces.
+  if (Array.isArray(room.rooms) && room.rooms.length && mats.floorMaterial) {
+    for (const r of room.rooms) {
+      if (!r || !Array.isArray(r.polygon_mm) || r.polygon_mm.length < 3) continue;
+      const mat = mats.floorMaterial(r.floor_material || 'oak');
+      if (!mat) continue;
+      const ring = polygonArea2(r.polygon_mm) > 0 ? r.polygon_mm : r.polygon_mm.slice().reverse();
+      const sh = new THREE.Shape(ring.map((p) => new THREE.Vector2(p[0] * MM, p[1] * MM)));
+      const g = new THREE.ShapeGeometry(sh);
+      g.rotateX(-Math.PI / 2);
+      geoms.push(g);
+      const m = new THREE.Mesh(g, mat);
+      m.name = 'floor:' + (r.id || r.name || '');
+      m.position.y = 0.0015;              // just above the base floor, no z-fighting
+      m.receiveShadow = true;
+      group.add(m);
+    }
+  }
+
   return {
     group, floor, walls, frames, bounds,
     height_mm: H, wallT_mm: T,
+    openings: room.openings || [],
+    interior_walls: room.interior_walls || [],
     dispose() {
       geoms.forEach((g) => g.dispose());
       walls.forEach((w) => w.material.dispose());

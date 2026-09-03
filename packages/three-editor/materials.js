@@ -2,6 +2,10 @@
 // Named colour roles for procedural furniture proxies (SPEC §4.1 `proxy.parts[].color`)
 // plus the §2 design tokens used by the editor's 3D overlays.
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
+import {
+  floorAlbedo, floorRoughness, plasterAlbedo, plasterBump, fabricWeave,
+  rugPile, woodGrain, metalBrush, tiled, FLOOR_MATERIALS,
+} from './textures.js';
 
 /** §2 authoritative tokens (subset needed in the 3D scene). */
 export const TOKENS = {
@@ -26,12 +30,26 @@ export const TOKENS = {
  * colourway hex; the other five are material-like and stay constant.
  */
 export const ROLES = {
-  body: { hex: '#D8D2C4', roughness: 0.82, metalness: 0.0 },
-  wood: { hex: '#A87B4E', roughness: 0.62, metalness: 0.0 },
-  metal: { hex: '#9DA3A9', roughness: 0.34, metalness: 0.85 },
-  glass: { hex: '#C6D8E4', roughness: 0.08, metalness: 0.0, opacity: 0.3, transparent: true },
-  fabric: { hex: '#B7AFA2', roughness: 1.0, metalness: 0.0 },
-  dark: { hex: '#26262B', roughness: 0.55, metalness: 0.1 },
+  // SPEC2 §G.3 — believable roughness/metalness per role.
+  body:   { hex: '#D8D2C4', roughness: 0.72, metalness: 0.0, tex: 'none' },
+  wood:   { hex: '#A87B4E', roughness: 0.54, metalness: 0.0, tex: 'wood',
+            bumpScale: 0.006, envIntensity: 0.55 },
+  metal:  { hex: '#9DA3A9', roughness: 0.28, metalness: 0.92, tex: 'metal',
+            envIntensity: 1.25 },
+  // "transmissive-looking but cheap" — no MeshPhysicalMaterial transmission
+  // (that costs a scene render pass). Low-roughness + low-opacity + strong env
+  // reads as glass at a fraction of the price.
+  glass:  { hex: '#CBDCE8', roughness: 0.05, metalness: 0.0, opacity: 0.24,
+            transparent: true, envIntensity: 2.0, tex: 'none' },
+  fabric: { hex: '#B7AFA2', roughness: 0.94, metalness: 0.0, tex: 'fabric',
+            bumpScale: 0.0035, sheen: 0.5, envIntensity: 0.35 },
+  dark:   { hex: '#26262B', roughness: 0.48, metalness: 0.12, tex: 'none',
+            envIntensity: 0.7 },
+  // additive roles (not referenced by editor.js; safe to add)
+  rug:    { hex: '#9C9284', roughness: 1.0, metalness: 0.0, tex: 'rug',
+            bumpScale: 0.005, sheen: 0.25, envIntensity: 0.2 },
+  leather:{ hex: '#7A5340', roughness: 0.62, metalness: 0.0, tex: 'fabric',
+            bumpScale: 0.002, sheen: 0.3, envIntensity: 0.6 },
 };
 
 export function isHex(s) {
@@ -65,6 +83,39 @@ export function createMaterialLibrary() {
       opacity: def.opacity ?? 1,
       side: THREE.FrontSide,
     });
+    // ---- SPEC2 §G.3/§G.4: attach the shared procedural maps ---------------
+    // All maps come from the module-level cache in textures.js, so a hundred
+    // fabric materials reference ONE weave texture.
+    try {
+      switch (def.tex) {
+        case 'wood':
+          m.bumpMap = woodGrain();
+          m.bumpScale = def.bumpScale ?? 0.005;
+          m.roughnessMap = woodGrain();
+          break;
+        case 'fabric':
+          m.bumpMap = fabricWeave();
+          m.bumpScale = def.bumpScale ?? 0.0035;
+          m.roughnessMap = fabricWeave();
+          break;
+        case 'rug':
+          m.bumpMap = rugPile();
+          m.bumpScale = def.bumpScale ?? 0.005;
+          m.roughnessMap = rugPile();
+          break;
+        case 'metal':
+          m.roughnessMap = metalBrush();
+          break;
+        default: break;
+      }
+    } catch (_) { /* canvas unavailable (SSR/tests) — plain colour is fine */ }
+    if (def.envIntensity != null) m.envMapIntensity = def.envIntensity;
+    // MeshStandardMaterial gained `sheen` in r132+; guard anyway.
+    if (def.sheen != null && 'sheen' in m) {
+      m.sheen = def.sheen;
+      m.sheenRoughness = 0.85;
+      m.sheenColor = new THREE.Color(hex).lerp(new THREE.Color('#ffffff'), 0.55);
+    }
     owned.push(m);
     return m;
   }
@@ -93,26 +144,81 @@ export function createMaterialLibrary() {
   }
 
   // ---- shell / overlay materials ------------------------------------------
-  const shell = {
-    floor: make({ hex: '#2B2B30', roughness: 0.95, metalness: 0 }),
-    wall: new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#3A3A41'),
-      roughness: 0.94,
+  // SPEC2 §G.4: the shell reads as plaster + real flooring, not grey blocks.
+  // These are *shared* materials; room.js retints/tiles clones where it needs to.
+  const floorMatCache = new Map();
+
+  /**
+   * Floor material for a given `floor_material` token (§G2:
+   * oak | ash | concrete | tile | carpet). Cached per kind and reused across
+   * every room in a multi-room plan.
+   */
+  function floorMaterial(kind = 'oak') {
+    const k = FLOOR_MATERIALS.indexOf(kind) >= 0 ? kind : 'oak';
+    if (floorMatCache.has(k)) return floorMatCache.get(k);
+    let m;
+    try {
+      m = new THREE.MeshStandardMaterial({
+        color: new THREE.Color('#ffffff'),
+        map: floorAlbedo(k),
+        roughnessMap: floorRoughness(k),
+        roughness: 1.0,
+        metalness: 0.0,
+        envMapIntensity: k === 'tile' ? 0.85 : (k === 'carpet' ? 0.10 : 0.35),
+        side: THREE.FrontSide,
+      });
+      if (k === 'carpet' || k === 'oak' || k === 'ash') {
+        m.bumpMap = k === 'carpet' ? rugPile() : woodGrain();
+        m.bumpScale = k === 'carpet' ? 0.004 : 0.0018;
+      }
+    } catch (_) {
+      m = new THREE.MeshStandardMaterial({ color: new THREE.Color('#A88A62'), roughness: 0.9 });
+    }
+    owned.push(m);
+    floorMatCache.set(k, m);
+    return m;
+  }
+
+  let wallMat;
+  try {
+    wallMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#EFEAE1'),
+      map: plasterAlbedo(),
+      bumpMap: plasterBump(),
+      bumpScale: 0.0025,
+      roughness: 0.93,
       metalness: 0,
       transparent: true,
       opacity: 1,
+      envMapIntensity: 0.35,
       side: THREE.DoubleSide,
-    }),
-    baseboard: make({ hex: '#4A4A52', roughness: 0.7, metalness: 0 }),
-    reveal: make({ hex: '#1A1A1E', roughness: 0.9, metalness: 0 }),
+    });
+  } catch (_) {
+    wallMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#EFEAE1'), roughness: 0.94, metalness: 0,
+      transparent: true, opacity: 1, side: THREE.DoubleSide,
+    });
+  }
+
+  const shell = {
+    // default floor stays available under the original key/signature
+    floor: floorMaterial('oak'),
+    floorMaterial,
+    wall: wallMat,
+    baseboard: make({ hex: '#F2EDE4', roughness: 0.44, metalness: 0.0, envIntensity: 0.5 }),
+    // thin dark reveal where wall meets floor / window returns (§G.6)
+    reveal: make({ hex: '#D9D2C6', roughness: 0.86, metalness: 0 }),
     glassPane: new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#8FB6D8'),
-      roughness: 0.05,
-      metalness: 0,
+      color: new THREE.Color('#DCEAF6'),
+      roughness: 0.04,
+      metalness: 0.0,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.16,
+      envMapIntensity: 2.4,
       side: THREE.DoubleSide,
+      depthWrite: false,
     }),
+    ceiling: make({ hex: '#F6F2EA', roughness: 0.96, metalness: 0 }),
   };
   owned.push(shell.wall, shell.glassPane);
 
@@ -151,10 +257,20 @@ export function createMaterialLibrary() {
   function dispose() {
     owned.forEach((m) => m.dispose && m.dispose());
     cache.clear();
+    floorMatCache.clear();
     owned.length = 0;
+    // NOTE: shared textures are intentionally NOT disposed here — they live in
+    // the textures.js module cache and outlive any single material library.
+    // Call disposeTextures() from textures.js on full teardown.
   }
 
-  return { get, shell, errTint, selectTint, lineMat, dispose, TOKENS, ROLES };
+  // Contract (unchanged, editor.js depends on it):
+  //   { get, shell, errTint, selectTint, lineMat, dispose, TOKENS, ROLES }
+  // Everything after `ROLES` is additive.
+  return {
+    get, shell, errTint, selectTint, lineMat, dispose, TOKENS, ROLES,
+    floorMaterial, tiled,
+  };
 }
 
 export default createMaterialLibrary;

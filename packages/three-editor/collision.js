@@ -144,6 +144,223 @@ export function obbWallDistances(obb, room) {
 }
 
 // --------------------------------------------------------------------------
+// SPEC2 §F — bounds clamping + wall snapping (defect #12)
+// --------------------------------------------------------------------------
+
+/** Twice the signed area. Positive ⇒ CCW in the plan frame (x right, y up). */
+export function signedArea2(poly) {
+  let s = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    s += a[0] * b[1] - b[0] * a[1];
+  }
+  return s;
+}
+
+/**
+ * The room's walls as {a, b, u, nIn, len}. `nIn` is the *interior* normal,
+ * derived from the polygon's winding, so concave / L-shaped plans work.
+ */
+export function wallEdges(poly) {
+  const ccw = signedArea2(poly) > 0;
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const u = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const nIn = ccw ? [-u[1], u[0]] : [u[1], -u[0]];
+    out.push({ wall_index: i, a, b, u, nIn, len });
+  }
+  return out;
+}
+
+/**
+ * How far an OBB's footprint pokes past a wall, and how far along that wall it
+ * sits. `depth > 0` means at least one corner is on the outside.
+ */
+function wallPenetration(corners, w) {
+  let minSigned = Infinity, minAlong = Infinity, maxAlong = -Infinity;
+  for (const c of corners) {
+    const rx = c[0] - w.a[0], ry = c[1] - w.a[1];
+    const perp = rx * w.nIn[0] + ry * w.nIn[1];
+    const along = rx * w.u[0] + ry * w.u[1];
+    if (perp < minSigned) minSigned = perp;
+    if (along < minAlong) minAlong = along;
+    if (along > maxAlong) maxAlong = along;
+  }
+  return { gap: minSigned, minAlong, maxAlong };
+}
+
+/** Is this wall segment relevant to a footprint at all (roughly beside it)? */
+function wallSpans(pen, w, slack = 60) {
+  return pen.maxAlong > -slack && pen.minAlong < w.len + slack;
+}
+
+/**
+ * SPEC2 §F. Clamp a proposed placement so that **every corner of the rotated
+ * footprint** stays inside the floor polygon, then optionally snap flush to a
+ * wall within `snap_mm`.
+ *
+ * Corrections are applied purely along wall normals, which is what makes a drag
+ * pushing into a wall keep tracking sideways ("slides along the boundary rather
+ * than sticking") instead of freezing.
+ *
+ * @param {{x_mm:number,y_mm:number,rot_deg:number}} placement proposed transform
+ * @param {object} item CatalogItem
+ * @param {object} room SPEC §4.4 Room
+ * @param {object} [opts] { snap:boolean, snap_mm:number, grid_mm:number }
+ * @returns {{x_mm,y_mm,rot_deg,clamped:boolean,snapped_wall:number|null,
+ *            clamped_walls:number[], corners:[number,number][]}}
+ */
+export function clampToRoom(placement, item, room, opts = {}) {
+  const poly = room.polygon_mm || [];
+  const snapOn = opts.snap !== false;
+  const snapMm = opts.snap_mm == null ? 120 : opts.snap_mm;
+  const grid = opts.grid_mm || 0;
+  let x = placement.x_mm, y = placement.y_mm;
+  const rot = placement.rot_deg || 0;
+  const out = {
+    x_mm: x, y_mm: y, rot_deg: rot,
+    clamped: false, snapped_wall: null, clamped_walls: [], corners: [],
+  };
+  if (poly.length < 3 || !item || !item.dims_mm) { out.corners = []; return out; }
+
+  const pl = item.placement || {};
+  // Wall/ceiling-mounted pieces are governed by their mount, not the floor OBB.
+  const offset = pl.wall_offset_mm || 0;
+  const walls = wallEdges(poly);
+
+  // ---- recovery: centre completely outside the polygon (SPEC2 §F) ---------
+  // The loop below only corrects *penetration of a wall the footprint spans*.
+  // A piece parked far outside the plan (or flicked diagonally past a corner)
+  // spans no wall at all, so `wallSpans` rejected every candidate and the
+  // placement came back untouched — setPosition(id, 99999, 99999) left the
+  // furniture stranded outside the room. Pull the centre back to just inside
+  // the nearest wall first; the loop then fixes any remaining corner overlap.
+  if (!pointInPolygon([x, y], poly)) {
+    let best = null;
+    for (const w of walls) {
+      const rx = x - w.a[0], ry = y - w.a[1];
+      const t = Math.max(0, Math.min(w.len, rx * w.u[0] + ry * w.u[1]));
+      const px = w.a[0] + w.u[0] * t, py = w.a[1] + w.u[1] * t;
+      const d = Math.hypot(x - px, y - py);
+      if (!best || d < best.d) best = { d, px, py, w };
+    }
+    if (best) {
+      let half = 0;
+      for (const c of obbCorners(footprintOBB({ x_mm: 0, y_mm: 0, rot_deg: rot }, item))) {
+        half = Math.max(half, Math.abs(c[0] * best.w.nIn[0] + c[1] * best.w.nIn[1]));
+      }
+      x = best.px + best.w.nIn[0] * (half + offset + 1);
+      y = best.py + best.w.nIn[1] * (half + offset + 1);
+      out.clamped = true;
+      out.recovered = true;
+    }
+  }
+
+  // ---- clamp: iterate so a corner pocket resolves against both walls -------
+  for (let iter = 0; iter < 6; iter++) {
+    let worst = null;
+    const corners = obbCorners(footprintOBB({ x_mm: x, y_mm: y, rot_deg: rot }, item));
+    for (const w of walls) {
+      const pen = wallPenetration(corners, w);
+      if (!wallSpans(pen, w)) continue;
+      const need = offset - pen.gap;                 // >0 ⇒ must push inward
+      if (need > 0.5 && (!worst || need > worst.need)) worst = { w, need };
+    }
+    if (!worst) break;
+    x += worst.w.nIn[0] * worst.need;
+    y += worst.w.nIn[1] * worst.need;
+    out.clamped = true;
+    if (!out.clamped_walls.includes(worst.w.wall_index)) out.clamped_walls.push(worst.w.wall_index);
+  }
+
+  // ---- snap flush when the footprint edge is within 120mm ------------------
+  if (snapOn && snapMm > 0) {
+    const corners = obbCorners(footprintOBB({ x_mm: x, y_mm: y, rot_deg: rot }, item));
+    let best = null;
+    for (const w of walls) {
+      const pen = wallPenetration(corners, w);
+      if (!wallSpans(pen, w)) continue;
+      const err = Math.abs(pen.gap - offset);
+      if (err <= snapMm && err > 0.5 && (!best || err < best.err)) {
+        best = { w, err, push: offset - pen.gap };
+      }
+    }
+    if (best) {
+      x += best.w.nIn[0] * best.push;
+      y += best.w.nIn[1] * best.push;
+      out.snapped_wall = best.w.wall_index;
+    }
+  }
+
+  if (grid > 0) {
+    // Re-grid, then re-verify: rounding must never push a corner back outside.
+    const gx = Math.round(x / grid) * grid;
+    const gy = Math.round(y / grid) * grid;
+    const c = obbCorners(footprintOBB({ x_mm: gx, y_mm: gy, rot_deg: rot }, item));
+    let ok = true;
+    for (const w of walls) {
+      const pen = wallPenetration(c, w);
+      if (!wallSpans(pen, w)) continue;
+      if (pen.gap < offset - 0.75) { ok = false; break; }
+    }
+    if (ok) { x = gx; y = gy; }
+  }
+
+  out.x_mm = x; out.y_mm = y;
+  out.corners = obbCorners(footprintOBB({ x_mm: x, y_mm: y, rot_deg: rot }, item));
+  return out;
+}
+
+/**
+ * Nearest wall plane for a `wall_mounted` item: returns the position on that
+ * wall plane plus the rotation that faces into the room, so it can never float
+ * in mid-air (SPEC2 §F).
+ */
+export function snapToWallPlane(placement, item, room) {
+  const poly = room.polygon_mm || [];
+  if (poly.length < 3) return { ...placement };
+  const walls = wallEdges(poly);
+  const d = item.dims_mm || { d: 100 };
+  const halfDepth = (d.d || 100) / 2;
+  const offset = (item.placement && item.placement.wall_offset_mm) || 0;
+  let best = null;
+  for (const w of walls) {
+    const r = distPointSeg([placement.x_mm, placement.y_mm], w.a, w.b);
+    if (!best || r.dist < best.dist) best = { w, dist: r.dist, t: r.t };
+  }
+  if (!best) return { ...placement };
+  const w = best.w;
+  const t = Math.max(0, Math.min(1, best.t));
+  const along = t * w.len;
+  const px = w.a[0] + w.u[0] * along + w.nIn[0] * (halfDepth + offset);
+  const py = w.a[1] + w.u[1] * along + w.nIn[1] * (halfDepth + offset);
+  let deg = Math.atan2(w.nIn[1], w.nIn[0]) * (180 / Math.PI) - 90;
+  deg = ((deg % 360) + 360) % 360;
+  return {
+    ...placement,
+    x_mm: Math.round(px), y_mm: Math.round(py),
+    rot_deg: Math.round(deg / 15) * 15 % 360,
+    wall_index: w.wall_index,
+  };
+}
+
+/** Every corner of the rotated footprint inside the polygon? (test helper) */
+export function obbInsideRoom(placement, item, room, tol = 1) {
+  const poly = room.polygon_mm || [];
+  const corners = obbCorners(footprintOBB(placement, item));
+  const walls = wallEdges(poly);
+  for (const w of walls) {
+    const pen = wallPenetration(corners, w);
+    if (!wallSpans(pen, w)) continue;
+    if (pen.gap < -tol) return false;
+  }
+  return corners.every((c) => pointInPolygon(c, poly) ||
+    walls.some((w) => distPointSeg(c, w.a, w.b).dist <= tol));
+}
+
+// --------------------------------------------------------------------------
 // full-scene detection
 // --------------------------------------------------------------------------
 /**

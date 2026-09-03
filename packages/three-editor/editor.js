@@ -5,17 +5,33 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
 import { createMaterialLibrary, TOKENS } from './materials.js';
 import { buildRoom, roomBounds, pointInPolygon, planToThree } from './room.js';
-import { buildProxy, disposeProxy } from './proxies.js';
+import {
+  buildProxy, disposeProxy, setProxyImage, clearProxyImage, contactShadow,
+} from './proxies.js';
+import { applyRenderer, createEnvironment, createLighting, enableShadows }
+  from './lighting.js';
 import {
   detectCollisions, footprintOBB, obbCorners, obbWallDistances, clearanceOBB, isFloorCollider,
+  clampToRoom, snapToWallPlane, obbInsideRoom,
 } from './collision.js';
 import {
-  createOrbitControls, createFirstPerson, createRotateRing,
-  resolveSnap, snapRotation, GRID_MM,
+  createOrbitControls, createPlanControls, createFirstPerson,
+  resolveSnap, snapRotation, GRID_MM, polygonAdmits,
+  BODY_RADIUS_MM, WALK_MPS, SPRINT_MPS, CROUCH_MPS, EYE_STAND_M, EYE_CROUCH_M,
 } from './controls.js';
+import { createGizmo, GIZMO_LAYER, GIZMO_SPAN_PX } from './gizmo.js';
 
 const MM = 1 / 1000;
 const D2R = Math.PI / 180;
+
+/**
+ * SPEC2 §C.1 — a dedicated raycast layer. Only item proxy meshes join it, so
+ * `raycaster.layers.set(PICK_LAYER)` can never reach a helper mesh. Belt and
+ * braces on top of the no-op `raycast` methods.
+ */
+export const PICK_LAYER = 2;
+/** SPEC2 §C.5 — depth window in which a non-rug beats a rug. */
+const RUG_DEPTH_TOL_M = 0.15;
 
 // ---------------------------------------------------------------------------
 // units (SPEC §1 — display only, never stored)
@@ -105,29 +121,29 @@ export function createEditor({
 
   const mats = createMaterialLibrary();
 
-  // lights
-  const hemi = new THREE.HemisphereLight(0xdfe6f2, 0x2a2a2e, 0.85);
-  scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xfff4e8, 1.05);
-  dir.position.set(3.2, 6.4, 2.4);
-  scene.add(dir);
-  const fill = new THREE.DirectionalLight(0x9fb6d8, 0.42);
-  fill.position.set(-4, 3, -3.4);
-  scene.add(fill);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.22));
+  // Lighting: the §G realism rig replaces the four flat lights that used to live
+  // here (hemi + dir + fill + ambient, no shadows at all). See REALISM.md §1.
+  // Shadow maps are rendered on demand — `renderer.shadowMap.autoUpdate` is false
+  // — because regenerating them every frame cost ~85% of the frame budget on a
+  // software renderer (5.4fps vs 135fps). Anything that moves geometry must call
+  // `rig.invalidateShadows()`.
+  applyRenderer(renderer);
+  const env = createEnvironment(renderer);
+  scene.environment = env.texture;
+  const rig = createLighting({ scene, renderer });
 
   // cameras
   const persp = new THREE.PerspectiveCamera(48, 1, 0.05, 300);
   const ortho = new THREE.OrthographicCamera(-5, 5, 5, -5, -50, 200);
-  const fpCam = new THREE.PerspectiveCamera(72, 1, 0.03, 200);
+  const fpCam = new THREE.PerspectiveCamera(68, 1, 0.03, 200);
   let camera = persp;
 
-  const orbit = createOrbitControls(persp, renderer.domElement, { minDistance: 0.9, maxDistance: 60 });
-  const fp = createFirstPerson(fpCam, renderer.domElement, {
-    inside: (v) => pointInPolygon([v.x / MM, -v.z / MM], S.room.polygon_mm),
-  });
-  const ring = createRotateRing(mats);
-  scene.add(ring.group);
+  const orbit = createOrbitControls(persp, renderer.domElement, { minDistance: 0.6, maxDistance: 60 });
+  const plan = createPlanControls(ortho, renderer.domElement, {});
+  const fp = createFirstPerson(fpCam, renderer.domElement, { canStand });
+  // SPEC2 §B — the manipulation gizmo replaces "drag the mesh across the floor".
+  const gizmo = createGizmo();
+  scene.add(gizmo.group);
 
   // furniture container
   const furniture = new THREE.Group();
@@ -140,7 +156,18 @@ export function createEditor({
   const guides = new THREE.LineSegments(guideGeom, mats.lineMat(TOKENS.clay, 0.85));
   guides.frustumCulled = false;
   guides.visible = false;
+  guides.raycast = () => {};              // SPEC2 §C.1 — never a pick target
   scene.add(guides);
+
+  // Wall-snap indicator (SPEC2 §F: "snapping must be visibly indicated").
+  // Owned here rather than by room.js, whose wall material is shared.
+  const wallHiGeom = new THREE.BufferGeometry();
+  wallHiGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  const wallHi = new THREE.Line(wallHiGeom, mats.lineMat(TOKENS.clay, 0.95));
+  wallHi.raycast = () => {};
+  wallHi.frustumCulled = false;
+  wallHi.visible = false;
+  scene.add(wallHi);
 
   // ---------------- HUD ----------------
   const hud = document.createElement('div');
@@ -171,24 +198,18 @@ export function createEditor({
     if (shell) { scene.remove(shell.group); shell.dispose(); }
     shell = buildRoom(S.room, mats, { wallThickness_mm: S.wallThickness_mm });
     scene.add(shell.group);
+    // Tight shadow camera == crisp contact shadows (REALISM.md §1.3). `buildRoom`
+    // does not surface `openings`, so hand them over for the window daylight.
+    rig.fit({ ...shell, openings: S.room.openings || [] });
     orbit.frame(shell.bounds, shell.height_mm);
     fp.place(shell.bounds);
     fitOrtho();
   }
 
+  /** Explicit plan re-frame. SPEC2 §D: only on fit or resize, never per frame. */
   function fitOrtho() {
     if (!shell) return;
-    const b = shell.bounds;
-    const aspect = Math.max(0.2, size.w / Math.max(1, size.h));
-    const padded = 1.16;
-    let halfW = (b.w * MM * padded) / 2;
-    let halfH = (b.d * MM * padded) / 2;
-    if (halfW / halfH < aspect) halfW = halfH * aspect; else halfH = halfW / aspect;
-    ortho.left = -halfW; ortho.right = halfW; ortho.top = halfH; ortho.bottom = -halfH;
-    ortho.position.set(b.cx * MM, 12, -b.cy * MM);
-    ortho.up.set(0, 0, -1);
-    ortho.lookAt(b.cx * MM, 0, -b.cy * MM);
-    ortho.updateProjectionMatrix();
+    plan.fit(shell.bounds, { w: size.w, h: size.h });
   }
 
   // ---------------- sizing ----------------
@@ -200,7 +221,8 @@ export function createEditor({
     renderer.setSize(size.w, size.h, false);
     persp.aspect = size.w / size.h; persp.updateProjectionMatrix();
     fpCam.aspect = size.w / size.h; fpCam.updateProjectionMatrix();
-    fitOrtho();
+    // Resize keeps the user's plan zoom + centre (SPEC2 §D).
+    plan.resize(size.w, size.h);
   }
   const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null;
   if (ro) ro.observe(mount);
@@ -216,10 +238,21 @@ export function createEditor({
     return 0;
   }
 
+  function elevOf(rec) {
+    return rec.placement.elev_mm != null ? rec.placement.elev_mm : elevationOf(rec.item);
+  }
+
   function applyTransform(rec) {
     const p = rec.placement;
-    rec.group.position.set(p.x_mm * MM, elevationOf(rec.item) * MM, -p.y_mm * MM);
-    rec.group.rotation.y = (p.rot_deg || 0) * D2R;   // CCW positive (SPEC §1)
+    rec.group.position.set(p.x_mm * MM, elevOf(rec) * MM, -p.y_mm * MM);
+    // rot_deg is CCW positive about the vertical axis (SPEC §1). tilt_x/tilt_z
+    // are the gizmo's secondary rotation rings (SPEC2 §B) and default to 0.
+    rec.group.rotation.order = 'YXZ';
+    rec.group.rotation.set(
+      (p.tilt_x_deg || 0) * D2R,
+      (p.rot_deg || 0) * D2R,
+      (p.tilt_z_deg || 0) * D2R,
+    );
   }
 
   function buildInstance(placement) {
@@ -230,6 +263,14 @@ export function createEditor({
     const hex = (item.colorways && item.colorways[placement.colorway | 0])
       ? item.colorways[placement.colorway | 0].hex : null;
     const proxy = buildProxy(item, { materials: mats, colorwayHex: hex });
+    enableShadows(proxy);
+    // SPEC2 §C.1/§C.2 — proxy meshes are the ONLY pickable geometry.
+    proxy.traverse((o) => {
+      if (o.isMesh) {
+        o.layers.enable(PICK_LAYER);
+        o.userData.instance_id = placement.instance_id;
+      }
+    });
     group.add(proxy);
 
     const d = item.dims_mm;
@@ -239,6 +280,10 @@ export function createEditor({
     overlay.position.y = (d.h * MM) / 2;
     overlay.visible = false;
     overlay.renderOrder = 8;
+    // SPEC2 §C root cause: this box spans the item's whole bounding volume and
+    // three.js raycasts invisible objects, so it used to steal neighbours'
+    // clicks. Neutralised.
+    overlay.raycast = () => {};
     group.add(overlay);
 
     // selection outline (footprint + bbox edges)
@@ -249,6 +294,7 @@ export function createEditor({
     outline.position.y = (d.h * MM) / 2;
     outline.visible = false;
     outline.renderOrder = 12;
+    outline.raycast = () => {};           // SPEC2 §C.1
     group.add(outline);
 
     // clearance envelope, dashed --blueprint footprint
@@ -266,6 +312,9 @@ export function createEditor({
     const clearance = new THREE.Line(clGeom, mats.lineMat(TOKENS.blueprint, 0.9, true));
     clearance.computeLineDistances();
     clearance.visible = false;
+    // The worst offender: a sofa's clearance footprint reaches 750mm past its
+    // front edge. SPEC2 §C.1 — no-op raycast.
+    clearance.raycast = () => {};
     group.add(clearance);
 
     furniture.add(group);
@@ -339,6 +388,10 @@ export function createEditor({
       against: p.against || null,
       locked: !!p.locked,
       added_by_ai: !!p.added_by_ai,
+      // Additive gizmo fields (SPEC2 §B). Absent ⇒ 0 / mount default.
+      tilt_x_deg: Math.round(p.tilt_x_deg || 0),
+      tilt_z_deg: Math.round(p.tilt_z_deg || 0),
+      ...(p.elev_mm != null ? { elev_mm: Math.round(p.elev_mm) } : {}),
     }));
     for (const p of S.placements) {
       const n = parseInt(String(p.instance_id).replace(/\D/g, ''), 10);
@@ -387,6 +440,9 @@ export function createEditor({
   }
 
   function emitChange() {
+    // Shadow maps are on-demand (autoUpdate=false); anything that moved geometry
+    // must mark them dirty or the scene keeps stale shadows.
+    rig.invalidateShadows();
     updateHud();
     if (onChange) onChange(getLayout());
   }
@@ -412,22 +468,92 @@ export function createEditor({
     }
   }
 
+
+  /**
+   * Bounds/mount constraint for programmatic placement changes (SPEC2 §F).
+   * The drag path already clamps; this gives `setPosition` / `setRotation` the
+   * same guarantee so no caller can park furniture outside the floor polygon.
+   * Wall- and ceiling-mounted pieces are governed by their mount instead.
+   */
+  function constrainProgrammatic(rec, prop) {
+    const x = Math.round(prop.x_mm), y = Math.round(prop.y_mm);
+    const rot = ((Math.round(prop.rot_deg || 0) % 360) + 360) % 360;
+    if (!rec || !rec.item) return { x_mm: x, y_mm: y, rot_deg: rot };
+    const mount = rec.item.placement || {};
+    if (mount.wall_mounted) {
+      const w = snapToWallPlane({ x_mm: x, y_mm: y, rot_deg: rot }, rec.item, S.room);
+      return { x_mm: Math.round(w.x_mm), y_mm: Math.round(w.y_mm), rot_deg: rot };
+    }
+    if (mount.ceiling_mounted) return { x_mm: x, y_mm: y, rot_deg: rot };
+    const cl = clampToRoom({ x_mm: x, y_mm: y, rot_deg: rot }, rec.item, S.room,
+      { snap: false, snap_mm: 0, grid_mm: 0 });
+    return { x_mm: Math.round(cl.x_mm), y_mm: Math.round(cl.y_mm), rot_deg: rot };
+  }
+
   // ---------------- selection ----------------
   function select(id, { silent = false } = {}) {
     if (id && !S.instances.has(id)) id = null;
     S.selection = id || null;
     applyOutlineStyle();
     const rec = S.selection ? S.instances.get(S.selection) : null;
-    if (rec) {
-      const d = rec.item.dims_mm;
-      ring.group.visible = S.mode !== 'scale-none';
-      ring.group.position.set(rec.placement.x_mm * MM, 0.026, -rec.placement.y_mm * MM);
-      ring.fit(Math.hypot(d.w, d.d) * MM * 0.62, rec.placement.rot_deg || 0);
-    } else {
-      ring.group.visible = false;
-    }
+    if (rec) syncGizmoTo(rec);
+    else gizmo.visible = false;
     updateHud();
     if (!silent && onSelect) onSelect(rec ? { ...rec.placement, item: rec.item } : null);
+  }
+
+  /**
+   * Point the gizmo at a record. Safe to call mid-drag: the drag's anchor,
+   * plane and start transform live inside gizmo.js and are never re-derived
+   * from this (SPEC2 §B — that re-derivation is the shake bug).
+   */
+  function syncGizmoTo(rec) {
+    if (!rec) { gizmo.visible = false; return; }
+    const pl = rec.item.placement || {};
+    gizmo.setTarget({
+      x_mm: rec.placement.x_mm,
+      y_mm: rec.placement.y_mm,
+      elev_mm: elevOf(rec),
+      rot_deg: rec.placement.rot_deg || 0,
+      tilt_x_deg: rec.placement.tilt_x_deg || 0,
+      tilt_z_deg: rec.placement.tilt_z_deg || 0,
+      // SPEC2 §B: the Y arrow only exists for mounted pieces.
+      allowY: !!(pl.wall_mounted || pl.ceiling_mounted),
+      locked: !!rec.placement.locked,
+    });
+    gizmo.visible = S.mode !== 'scale-none' && S.view !== 'first-person';
+    gizmo.update(camera, size.h);
+  }
+
+  /** Wall segment highlight while a snap is active (SPEC2 §F). */
+  function highlightWall(idx) {
+    if (idx == null) { wallHi.visible = false; return; }
+    const poly = S.room.polygon_mm || [];
+    const a = poly[idx], b = poly[(idx + 1) % poly.length];
+    if (!a || !b) { wallHi.visible = false; return; }
+    const arr = wallHiGeom.attributes.position.array;
+    arr[0] = a[0] * MM; arr[1] = 0.024; arr[2] = -a[1] * MM;
+    arr[3] = b[0] * MM; arr[4] = 0.024; arr[5] = -b[1] * MM;
+    wallHiGeom.attributes.position.needsUpdate = true;
+    wallHi.visible = true;
+  }
+
+  /**
+   * SPEC2 §E — where the walking body may stand: inside the room polygon with a
+   * 250mm body radius, and outside every floor collider's footprint.
+   */
+  function canStand(x_m, z_m) {
+    const x_mm = x_m / MM, y_mm = -z_m / MM;
+    if (!polygonAdmits(x_mm, y_mm, S.room.polygon_mm, BODY_RADIUS_MM)) return false;
+    for (const [, rec] of S.instances) {
+      if (!isFloorCollider(rec.item)) continue;
+      const o = footprintOBB(rec.placement, rec.item);
+      const dx = x_mm - o.cx, dy = y_mm - o.cy;
+      const lx = dx * o.cos + dy * o.sin;
+      const ly = -dx * o.sin + dy * o.cos;
+      if (Math.abs(lx) <= o.hw + BODY_RADIUS_MM && Math.abs(ly) <= o.hd + BODY_RADIUS_MM) return false;
+    }
+    return true;
   }
 
   // ---------------- HUD ----------------
@@ -456,6 +582,18 @@ export function createEditor({
     hud.style.top = Math.max(74, Math.min(size.h - 8, y)) + 'px';
   }
 
+  /** World point -> client (page) coordinates through the active camera. */
+  function worldToClient(v) {
+    camera.updateMatrixWorld();
+    const r = renderer.domElement.getBoundingClientRect();
+    const p = v.clone().project(camera);
+    return {
+      x: r.left + (p.x * 0.5 + 0.5) * r.width,
+      y: r.top + (-p.y * 0.5 + 0.5) * r.height,
+      ndc: { x: p.x, y: p.y, z: p.z },
+    };
+  }
+
   // ---------------- picking ----------------
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
@@ -473,141 +611,316 @@ export function createEditor({
     return { x_mm: hit.x / MM, y_mm: -hit.z / MM, v: hit };
   }
   /**
-   * One raycast, then compare depths: the rotate ring lies on the floor and its
-   * far arc often sits *behind* the item along the same ray, so a naive
-   * ring-first test would steal every item click. Nearest hit wins.
+   * Every proxy mesh currently in the scene. Nothing else is pickable.
+   *
+   * `Raycaster.intersectObjects` does NOT refresh world matrices — it assumes
+   * the renderer already did. A pick issued between `add()` and the next
+   * rendered frame therefore tested meshes still sitting at the origin and
+   * silently missed everything, which made programmatic picks (and the first
+   * click after adding an item) unreliable. Refresh explicitly.
    */
+  function pickTargets() {
+    furniture.updateMatrixWorld(true);
+    const out = [];
+    for (const [, rec] of S.instances) {
+      if (!rec.group.visible) continue;
+      rec.proxy.traverse((o) => { if (o.isMesh && o.visible) out.push(o); });
+    }
+    return out;
+  }
+
+  /** SPEC2 §C.3 — an invisible ancestor disqualifies a candidate. */
+  function ancestorsVisible(o) {
+    let n = o;
+    while (n && n !== scene) { if (!n.visible) return false; n = n.parent; }
+    return true;
+  }
+
+  function instanceIdOf(obj) {
+    let o = obj;
+    while (o && o.parent !== furniture) o = o.parent;
+    return (o && typeof o.name === 'string' && o.name.startsWith('inst:')) ? o.name.slice(5) : null;
+  }
+
+  function isRug(rec) {
+    return !!rec && (rec.item.archetype === 'rug' || rec.item.category === 'rugs');
+  }
+
+  /**
+   * SPEC2 §C. Raycast **only** item proxy meshes, on PICK_LAYER, skipping
+   * anything invisible. Nearest hit wins, except that a rug never shadows the
+   * thing standing on it.
+   * @returns {null|{id:string,rec:object,distance:number,rug:boolean}}
+   */
+  function pickFurniture(ev) {
+    raycaster.setFromCamera(toNdc(ev), camera);
+    const prevMask = raycaster.layers.mask;
+    raycaster.layers.set(PICK_LAYER);
+    let hits;
+    try {
+      hits = raycaster.intersectObjects(pickTargets(), false);
+    } finally {
+      raycaster.layers.mask = prevMask;
+    }
+    const ranked = [];
+    const seen = new Set();
+    for (const h of hits) {
+      if (!h.object.visible || !ancestorsVisible(h.object)) continue;
+      const id = instanceIdOf(h.object);
+      if (!id || seen.has(id)) continue;
+      const rec = S.instances.get(id);
+      if (!rec) continue;
+      seen.add(id);
+      ranked.push({ id, rec, distance: h.distance, rug: isRug(rec) });
+    }
+    if (!ranked.length) return null;
+    const nearest = ranked[0];
+    if (nearest.rug) {
+      // SPEC2 §C.5 — flat floor-level pieces must not win a near-tie.
+      const alt = ranked.find((r) => !r.rug && (r.distance - nearest.distance) <= RUG_DEPTH_TOL_M);
+      if (alt) return alt;
+    }
+    return nearest;
+  }
+
+  /** Combined pick. Gizmo handles always take priority (SPEC2 §C.4). */
   function pick(ev) {
     raycaster.setFromCamera(toNdc(ev), camera);
-    let instance = null, instanceD = Infinity;
-    for (const h of raycaster.intersectObjects(furniture.children, true)) {
-      let o = h.object;
-      while (o && o.parent !== furniture) o = o.parent;
-      if (o && o.name.startsWith('inst:')) { instance = o.name.slice(5); instanceD = h.distance; break; }
-    }
-    let ringD = Infinity, ringOutsideBody = false;
-    if (ring.group.visible && S.mode !== 'scale-none') {
-      const rh = raycaster.intersectObjects([ring.pick, ring.handle], false);
-      if (rh.length) {
-        ringD = rh[0].distance;
-        // The ring renders with depthTest:false, so it is always visually on top.
-        // Picking mirrors that: a ring hit OUTSIDE the selected item's footprint
-        // rotates; a hit over the body translates. That keeps tall neighbours
-        // (a floor lamp, a bookcase) from stealing a ring grab, without letting
-        // the ring's far arc steal clicks on the item itself.
-        const rec = S.selection ? S.instances.get(S.selection) : null;
-        if (rec) {
-          const pl = rec.placement;
-          const a = (pl.rot_deg || 0) * D2R;
-          const dx = rh[0].point.x / MM - pl.x_mm;
-          const dy = -rh[0].point.z / MM - pl.y_mm;
-          const lx = dx * Math.cos(a) + dy * Math.sin(a);
-          const ly = -dx * Math.sin(a) + dy * Math.cos(a);
-          ringOutsideBody = Math.abs(lx) > rec.item.dims_mm.w / 2 + 25 ||
-                            Math.abs(ly) > rec.item.dims_mm.d / 2 + 25;
-        }
-      }
-    }
-    const ringWins = ringD < Infinity && (ringOutsideBody || ringD < instanceD);
-    return { instance, instanceD, ringD, ring: ringWins };
+    const g = gizmo.visible ? gizmo.hitTest(raycaster) : null;
+    const f = pickFurniture(ev);
+    return {
+      gizmo: g,
+      instance: f ? f.id : null,
+      instanceD: f ? f.distance : Infinity,
+      furniture: f,
+    };
   }
   function pickInstance(ev) { return pick(ev).instance; }
 
-  // ---------------- interaction ----------------
-  const drag = { active: false, kind: null, id: null, start: null, offset: null, moved: false, startRot: 0, startAngle: 0 };
+  // ---------------- interaction (SPEC2 §A — the only bindings) -------------
+  // Left click: select furniture, nothing else. Left drag on a gizmo handle:
+  // manipulate. Left drag on empty space: nothing. Right drag: orbit (3D) /
+  // pan (plan) / look (walk) and NEVER selects. Middle drag: pan, vertically
+  // inverted in 3D. Wheel: zoom at the cursor. Ctrl+drag: free transform.
+  const drag = {
+    active: false, kind: null, id: null, start: null, moved: false,
+    pointerId: null, free: false, moves: 0,
+  };
+  /** Set by a right/middle drag so the trailing `click` can't select. */
+  let suppressClick = false;
+
+  const isFree = (ev) => !!(ev && (ev.ctrlKey || ev.metaKey));
+
+  function capture(ev) {
+    drag.pointerId = ev.pointerId != null ? ev.pointerId : null;
+    if (drag.pointerId == null) return;
+    try { renderer.domElement.setPointerCapture(drag.pointerId); } catch (e) { /* synthetic */ }
+  }
+  function releaseCapture() {
+    if (drag.pointerId == null) return;
+    try { renderer.domElement.releasePointerCapture(drag.pointerId); } catch (e) { /* gone */ }
+    drag.pointerId = null;
+  }
+
+  function beginGizmoDrag(handle, ev, id) {
+    const rec = S.instances.get(id);
+    if (!rec || rec.placement.locked) return false;
+    const d = gizmo.beginDrag(handle, raycaster, camera);
+    if (!d) return false;
+    drag.active = true; drag.kind = 'gizmo'; drag.id = id;
+    drag.start = historySnapshot(); drag.moved = false; drag.moves = 0;
+    drag.free = isFree(ev);
+    capture(ev);
+    orbit.enabled = false;
+    plan.enabled = false;
+    return true;
+  }
 
   function onPointerDown(ev) {
+    if (S.disposed) return;
     renderer.domElement.focus({ preventScroll: true });
-    if (S.view === 'first-person') { fp.begin(ev); return; }
 
-    const wantPan = ev.button === 1 || ev.button === 2 || (ev.shiftKey && ev.button === 0 && !S.selection);
-    const hit = ev.button === 0 ? pick(ev) : { instance: null, ring: false };
-
-    if (ev.button === 0 && hit.ring) {
-      const rec = S.instances.get(S.selection);
-      const fpt = floorPoint(ev);
-      if (rec && fpt && !rec.placement.locked) {
-        drag.active = true; drag.kind = 'rotate'; drag.id = S.selection; drag.moved = false;
-        drag.startRot = rec.placement.rot_deg || 0;
-        drag.startAngle = Math.atan2(fpt.y_mm - rec.placement.y_mm, fpt.x_mm - rec.placement.x_mm) / D2R;
-        drag.start = historySnapshot();
-        orbit.enabled = false;
-        return;
-      }
-    }
-
-    if (ev.button === 0 && !wantPan) {
-      const id = hit.instance;
-      if (id) {
-        if (id !== S.selection) select(id);
-        const rec = S.instances.get(id);
-        const fpt = floorPoint(ev);
-        if (rec && fpt && !rec.placement.locked && S.mode === 'translate') {
-          drag.active = true; drag.kind = 'translate'; drag.id = id; drag.moved = false;
-          drag.offset = { dx: rec.placement.x_mm - fpt.x_mm, dy: rec.placement.y_mm - fpt.y_mm };
-          drag.start = historySnapshot();
-          orbit.enabled = false;
-        }
-        return;
-      }
-      drag.active = true; drag.kind = 'maybe-deselect'; drag.moved = false;
-      if (S.view === '3d') orbit.begin(ev, 'rotate');
+    // ---- walk view: right drag looks. Nothing else. ----
+    if (S.view === 'first-person') {
+      if (ev.button === 2) { ev.preventDefault(); suppressClick = true; fp.begin(ev); }
       return;
     }
-    if (S.view === '3d') orbit.begin(ev, wantPan ? 'pan' : 'rotate');
+
+    // ---- right drag: orbit in 3D, pan in plan. Never picks. ----
+    if (ev.button === 2) {
+      ev.preventDefault();
+      suppressClick = true;
+      if (S.view === 'top') { plan.enabled = true; plan.begin(ev); }
+      else { orbit.enabled = true; orbit.begin(ev, 'orbit'); }
+      return;
+    }
+
+    // ---- middle drag: pan. Vertically inverted in 3D (SPEC2 §A #4b). ----
+    if (ev.button === 1) {
+      ev.preventDefault();
+      suppressClick = true;
+      if (S.view === 'top') { plan.enabled = true; plan.begin(ev); }
+      else { orbit.enabled = true; orbit.begin(ev, 'pan-invert'); }
+      return;
+    }
+
+    if (ev.button !== 0) return;
+
+    raycaster.setFromCamera(toNdc(ev), camera);
+    // Gizmo handles take priority over everything (SPEC2 §C.4).
+    if (gizmo.visible && S.selection) {
+      const g = gizmo.hitTest(raycaster);
+      if (g && beginGizmoDrag(g.handle, ev, S.selection)) return;
+    }
+
+    const hit = pickFurniture(ev);
+    if (hit) {
+      if (hit.id !== S.selection) select(hit.id);
+      // Ctrl+drag straight off the body = free transform (SPEC2 §A; Alt no
+      // longer does this).
+      if (isFree(ev)) {
+        raycaster.setFromCamera(toNdc(ev), camera);
+        const planar = gizmo.handles.find((h) => h.id === 'planar');
+        if (planar) beginGizmoDrag(planar, ev, hit.id);
+      }
+      return;
+    }
+
+    // Left click on empty space deselects; a left DRAG there does nothing.
+    if (S.selection) select(null);
   }
 
   function onPointerMove(ev) {
-    if (!drag.active) return;
-    if (drag.kind === 'maybe-deselect') { drag.moved = true; return; }
+    if (S.disposed || S.view === 'first-person') return;
+
+    if (!drag.active) {
+      // Hover feedback on the gizmo (SPEC2 §B).
+      if (gizmo.visible && !orbit.isDragging() && !plan.isDragging()) {
+        raycaster.setFromCamera(toNdc(ev), camera);
+        const g = gizmo.hitTest(raycaster);
+        gizmo.setHover(g ? g.handle : null);
+        renderer.domElement.style.cursor = g ? 'grab' : '';
+      }
+      return;
+    }
+    if (drag.pointerId != null && ev.pointerId != null && ev.pointerId !== drag.pointerId) return;
     const rec = S.instances.get(drag.id);
     if (!rec) return;
-    const fpt = floorPoint(ev);
-    if (!fpt) return;
-    drag.moved = true;
 
-    if (drag.kind === 'translate') {
-      const raw = { x: fpt.x_mm + drag.offset.dx, y: fpt.y_mm + drag.offset.dy };
+    raycaster.setFromCamera(toNdc(ev), camera);
+    const free = drag.free || isFree(ev);
+    const prop = gizmo.moveDrag(raycaster, { free });
+    if (!prop) return;
+    drag.moves += 1;
+    if (prop.degenerate) return;          // held last good value; do not commit
+    drag.moved = true;
+    applyProposal(rec, prop, free);
+  }
+
+  /**
+   * Take the gizmo's projective proposal and land it: snapping (unless Ctrl),
+   * then the SPEC2 §F bounds clamp, then the scene + HUD + validation.
+   */
+  function applyProposal(rec, prop, free) {
+    const p = rec.placement;
+    const handle = gizmo.activeHandle();
+    const rotating = !!handle && handle.kind === 'rotate';
+    let x = prop.x_mm, y = prop.y_mm, rot = prop.rot_deg;
+    let guideList = [];
+    let markWall = null;
+
+    if (!free && !rotating) {
       const neighbours = S.placements
-        .filter((p) => p.instance_id !== drag.id && S.catalog.get(p.item_id))
-        .map((p) => ({ placement: p, item: S.catalog.get(p.item_id) }));
+        .filter((q) => q.instance_id !== p.instance_id && S.catalog.get(q.item_id))
+        .map((q) => ({ placement: q, item: S.catalog.get(q.item_id) }));
       const snap = resolveSnap({
-        x_mm: raw.x, y_mm: raw.y, rot_deg: rec.placement.rot_deg || 0,
-        item: rec.item, room: S.room, neighbours, free: ev.altKey,
+        x_mm: x, y_mm: y, rot_deg: rot, item: rec.item, room: S.room, neighbours, free: false,
       });
-      rec.placement.x_mm = snap.x_mm;
-      rec.placement.y_mm = snap.y_mm;
-      rec.placement.rot_deg = snap.rot_deg;
-      applyTransform(rec);
-      drawGuides(snap.guides);
-    } else if (drag.kind === 'rotate') {
-      const a = Math.atan2(fpt.y_mm - rec.placement.y_mm, fpt.x_mm - rec.placement.x_mm) / D2R;
-      // plan CCW angle delta maps straight onto rot_deg
-      const delta = a - drag.startAngle;
-      rec.placement.rot_deg = snapRotation(drag.startRot + delta, ev.shiftKey);
-      applyTransform(rec);
+      x = snap.x_mm; y = snap.y_mm; rot = snap.rot_deg;
+      guideList = snap.guides;
+      markWall = snap.wall_index;
     }
-    if (S.selection === drag.id) {
-      ring.group.position.set(rec.placement.x_mm * MM, 0.026, -rec.placement.y_mm * MM);
-      ring.fit(Math.hypot(rec.item.dims_mm.w, rec.item.dims_mm.d) * MM * 0.62, rec.placement.rot_deg);
+
+    const mount = rec.item.placement || {};
+    if (mount.wall_mounted) {
+      const w = snapToWallPlane({ x_mm: x, y_mm: y, rot_deg: rot }, rec.item, S.room);
+      x = w.x_mm; y = w.y_mm;
+      if (!rotating) rot = w.rot_deg;
+      markWall = w.wall_index;
+    } else if (!mount.ceiling_mounted) {
+      // SPEC2 §F — every OBB corner stays inside the floor polygon. Corrections
+      // run along wall normals only, so a drag into a wall keeps tracking
+      // sideways instead of sticking.
+      const cl = clampToRoom({ x_mm: x, y_mm: y, rot_deg: rot }, rec.item, S.room, {
+        snap: !free, snap_mm: free ? 0 : 120, grid_mm: free ? 0 : GRID_MM,
+      });
+      x = cl.x_mm; y = cl.y_mm;
+      if (cl.snapped_wall != null) markWall = cl.snapped_wall;
+      else if (cl.clamped && cl.clamped_walls.length && markWall == null) markWall = cl.clamped_walls[0];
     }
+
+    p.x_mm = Math.round(x);
+    p.y_mm = Math.round(y);
+    p.rot_deg = ((Math.round(rot) % 360) + 360) % 360;
+    if (prop.tilt_x_deg != null) p.tilt_x_deg = Math.round(prop.tilt_x_deg);
+    if (prop.tilt_z_deg != null) p.tilt_z_deg = Math.round(prop.tilt_z_deg);
+    if (prop.elev_mm != null && (mount.wall_mounted || mount.ceiling_mounted)) {
+      p.elev_mm = Math.max(0, Math.round(prop.elev_mm));
+    }
+
+    applyTransform(rec);
+    drawGuides(guideList);
+    highlightWall(markWall);
+    if (S.selection === rec.placement.instance_id) syncGizmoTo(rec);
     revalidate();
     updateHud();
   }
 
-  function onPointerUp() {
-    if (drag.active) {
-      if (drag.kind === 'maybe-deselect' && !drag.moved) select(null);
-      if ((drag.kind === 'translate' || drag.kind === 'rotate') && drag.moved) {
+  function finishDrag(commit) {
+    if (drag.active && drag.kind === 'gizmo') {
+      gizmo.endDrag();
+      // One history entry per completed drag, not per frame (SPEC2 §B).
+      if (commit && drag.moved && drag.start) {
         S.undo.push(drag.start);
         if (S.undo.length > 60) S.undo.shift();
         S.redo.length = 0;
         emitChange();
       }
+      releaseCapture();
     }
     drag.active = false; drag.kind = null; drag.id = null;
+    drag.free = false; drag.moved = false; drag.start = null; drag.moves = 0;
+    drag.pointerId = null;
     guides.visible = false;
-    orbit.enabled = true;
+    wallHi.visible = false;
+    orbit.enabled = S.view === '3d';
+    plan.enabled = S.view === 'top';
+  }
+
+  function onPointerUp(ev) {
+    if (S.view === 'first-person') { fp.end(); return; }
+    finishDrag(true);
+    void ev;
+  }
+  function onPointerCancel() {
+    if (S.view === 'first-person') { fp.end(); return; }
+    finishDrag(true);
+  }
+  function onLostCapture() { if (drag.active) finishDrag(true); }
+
+  /** SPEC2 §A — the click that follows an orbit/pan must not select. */
+  function onClick(ev) {
+    if (suppressClick) { ev.stopPropagation(); suppressClick = false; }
+  }
+  function onContextMenu(ev) { ev.preventDefault(); }
+
+  function onWheel(ev) {
+    ev.preventDefault();
+    if (S.view === 'first-person') return;
+    const n = toNdc(ev);
+    const at = { x: n.x, y: n.y };
+    if (S.view === 'top') plan.zoomAt(at, ev.deltaY);
+    else orbit.zoomAt(at, ev.deltaY);
   }
 
   function drawGuides(list) {
@@ -624,16 +937,30 @@ export function createEditor({
     guides.visible = true;
   }
 
-  renderer.domElement.addEventListener('pointerdown', onPointerDown);
-  window.addEventListener('pointermove', onPointerMove);
-  window.addEventListener('pointerup', onPointerUp);
+  // Everything is bound to the canvas. Pointer capture retargets moves/ups
+  // here for the whole drag, so leaving the canvas cannot desync (SPEC2 §B/§D).
+  const dom = renderer.domElement;
+  dom.addEventListener('pointerdown', onPointerDown);
+  dom.addEventListener('pointermove', onPointerMove);
+  dom.addEventListener('pointerup', onPointerUp);
+  dom.addEventListener('pointercancel', onPointerCancel);
+  dom.addEventListener('lostpointercapture', onLostCapture);
+  dom.addEventListener('click', onClick, true);
+  dom.addEventListener('contextmenu', onContextMenu);
+  dom.addEventListener('wheel', onWheel, { passive: false });
 
   // ---------------- keyboard ----------------
   function onKeyDown(ev) {
     const t = ev.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     const meta = ev.metaKey || ev.ctrlKey;
-    const k = ev.key.toLowerCase();
+    const k = (ev.key || '').toLowerCase();
+    // In walk view the only editor binding is Esc; W/A/S/D, Shift and Ctrl
+    // belong to the walker (SPEC2 §A/§E).
+    if (S.view === 'first-person') {
+      if (k === 'escape') { api.setView('3d'); }
+      return;
+    }
     if (meta && k === 'd') { ev.preventDefault(); if (S.selection) api.duplicate(S.selection); return; }
     if (meta && k === 'z' && !ev.shiftKey) { ev.preventDefault(); undo(); return; }
     if ((meta && k === 'z' && ev.shiftKey) || (meta && k === 'y')) { ev.preventDefault(); redo(); return; }
@@ -642,11 +969,6 @@ export function createEditor({
       return;
     }
     if (k === 'escape') { select(null); return; }
-    if (k === 'r' && S.selection) {
-      const p = findPlacement(S.selection);
-      if (p && !p.locked) { pushHistory(); p.rot_deg = snapRotation((p.rot_deg || 0) + 15); syncOne(S.selection); emitChange(); }
-      return;
-    }
     const nudge = { arrowleft: [-GRID_MM, 0], arrowright: [GRID_MM, 0], arrowup: [0, GRID_MM], arrowdown: [0, -GRID_MM] }[k];
     if (nudge && S.selection) {
       ev.preventDefault();
@@ -665,10 +987,7 @@ export function createEditor({
     const rec = S.instances.get(id);
     if (!rec) return;
     applyTransform(rec);
-    if (S.selection === id) {
-      ring.group.position.set(rec.placement.x_mm * MM, 0.026, -rec.placement.y_mm * MM);
-      ring.fit(Math.hypot(rec.item.dims_mm.w, rec.item.dims_mm.d) * MM * 0.62, rec.placement.rot_deg);
-    }
+    if (S.selection === id) syncGizmoTo(rec);
     revalidate();
     updateHud();
   }
@@ -708,6 +1027,8 @@ export function createEditor({
     const dt = (now - lastT) / 1000; lastT = now;
     if (S.view === '3d') orbit.update();
     if (S.view === 'first-person') fp.update(dt);
+    // Screen-constant gizmo: re-scaled every frame against the live camera.
+    if (gizmo.visible) gizmo.update(camera, size.h);
     updateWallFade();
     if (S.selection) updateHud();
     renderer.render(scene, camera);
@@ -771,6 +1092,9 @@ export function createEditor({
         against: at.against || null,
         locked: !!at.locked,
         added_by_ai: !!at.added_by_ai,
+        tilt_x_deg: Math.round(at.tilt_x_deg || 0),
+        tilt_z_deg: Math.round(at.tilt_z_deg || 0),
+        ...(at.elev_mm != null ? { elev_mm: Math.round(at.elev_mm) } : {}),
       };
       S.placements.push(placement);
       buildInstance(placement);
@@ -808,17 +1132,33 @@ export function createEditor({
     select(instance_id) { select(instance_id); return api; },
     setMode(mode) {
       S.mode = ['translate', 'rotate', 'scale-none'].includes(mode) ? mode : 'translate';
-      ring.group.visible = !!S.selection && S.mode !== 'scale-none';
+      // The gizmo mode follows: 'translate' hides the rings, 'rotate' hides the
+      // arrows, and setGizmoMode() can override it explicitly.
+      gizmo.setMode(S.mode === 'translate' ? 'both' : (S.mode === 'rotate' ? 'rotate' : 'both'));
+      if (S.selection) syncGizmoTo(S.instances.get(S.selection));
+      else gizmo.visible = false;
       return api;
     },
     setView(view) {
       S.view = ['3d', 'top', 'first-person'].includes(view) ? view : '3d';
+      finishDrag(false);
       fp.active = S.view === 'first-person';
-      if (S.view === '3d') { camera = persp; orbit.enabled = true; }
-      else if (S.view === 'top') { camera = ortho; orbit.enabled = false; fitOrtho(); }
-      else { camera = fpCam; orbit.enabled = false; fp.place(shell ? shell.bounds : roomBounds(S.room)); }
-      badge.textContent = S.view === 'first-person' ? 'first-person · wasd + drag' : S.view;
+      if (S.view === '3d') {
+        camera = persp; orbit.enabled = true; plan.enabled = false;
+      } else if (S.view === 'top') {
+        camera = ortho; orbit.enabled = false; plan.enabled = true;
+        plan.setViewport(size.w, size.h);
+        plan.apply();                      // keeps the user's zoom (SPEC2 §D)
+      } else {
+        camera = fpCam; orbit.enabled = false; plan.enabled = false;
+        fp.setCanStand(canStand);
+        fp.place(shell ? shell.bounds : roomBounds(S.room));
+      }
+      badge.textContent = S.view === 'first-person'
+        ? 'walk · wasd · shift sprint · ctrl crouch · right-drag look'
+        : S.view;
       applyOutlineStyle();
+      if (S.selection) syncGizmoTo(S.instances.get(S.selection));
       updateHud();
       return api;
     },
@@ -837,8 +1177,9 @@ export function createEditor({
         camera.aspect = width / height; camera.updateProjectionMatrix();
       } else {
         const aspect = width / height;
-        const halfH = (ortho.top - ortho.bottom) / 2;
+        const halfH = plan.state.halfH;
         ortho.left = -halfH * aspect; ortho.right = halfH * aspect;
+        ortho.top = halfH; ortho.bottom = -halfH;
         ortho.updateProjectionMatrix();
       }
       if (transparent) renderer.setClearAlpha(0);
@@ -850,7 +1191,7 @@ export function createEditor({
       renderer.setSize(prevW, prevH, false);
       if (camera === persp || camera === fpCam) {
         camera.aspect = prevW / prevH; camera.updateProjectionMatrix();
-      } else fitOrtho();
+      } else plan.resize(prevW, prevH);
       renderer.render(scene, camera);
       updateHud();
       return url;
@@ -859,26 +1200,182 @@ export function createEditor({
       if (S.disposed) return;
       S.disposed = true;
       cancelAnimationFrame(raf);
-      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
+      dom.removeEventListener('pointerdown', onPointerDown);
+      dom.removeEventListener('pointermove', onPointerMove);
+      dom.removeEventListener('pointerup', onPointerUp);
+      dom.removeEventListener('pointercancel', onPointerCancel);
+      dom.removeEventListener('lostpointercapture', onLostCapture);
+      dom.removeEventListener('click', onClick, true);
+      dom.removeEventListener('contextmenu', onContextMenu);
+      dom.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', resize);
       if (ro) ro.disconnect();
-      orbit.dispose(); fp.dispose(); ring.dispose();
+      orbit.dispose(); plan.dispose(); fp.dispose(); gizmo.dispose();
       clearInstances();
       if (shell) shell.dispose();
       guideGeom.dispose();
+      wallHiGeom.dispose();
       mats.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
       hud.remove(); badge.remove();
     },
 
+    // --- SPEC2 additions --------------------------------------------------
+    /** SPEC2 §B — 'translate' | 'rotate' | 'both'. */
+    setGizmoMode(m) {
+      gizmo.setMode(m);
+      if (S.selection) syncGizmoTo(S.instances.get(S.selection));
+      return api;
+    },
+    getGizmoMode: () => gizmo.getMode(),
+    /** Jump the damped orbit camera to its destination (snapshots / tests). */
+    settleCamera() { if (S.view === '3d') orbit.settle(); return api; },
+    /** Explicit plan re-frame (SPEC2 §D "keep an explicit fit action"). */
+    fitPlan() { fitOrtho(); return api; },
+    frameView() { if (S.view === 'top') fitOrtho(); else if (shell) orbit.frame(shell.bounds, shell.height_mm); return api; },
+    /** Reposition the walker (SPEC2 §E tooling + tests). */
+    setWalk({ x_mm, y_mm, yaw_deg, pitch, reset, eye_m, speed_mps } = {}) {
+      const st = fp.state;
+      if (x_mm != null) st.pos.x = x_mm * MM;
+      if (y_mm != null) st.pos.z = -y_mm * MM;
+      if (yaw_deg != null) st.yaw = yaw_deg * D2R;
+      if (eye_m != null) st.eye = eye_m;
+      if (speed_mps != null) st.speed = speed_mps;
+      if (pitch != null) st.pitch = pitch;
+      if (reset) {
+        st.keys.clear(); st.sprint = false; st.crouch = false;
+        st.speed = WALK_MPS; st.speedTarget = WALK_MPS;
+        st.eye = EYE_STAND_M; st.eyeTarget = EYE_STAND_M;
+      }
+      st.pos.y = st.eye;
+      fpCam.position.copy(st.pos);
+      return api;
+    },
+    /**
+     * Advance the walk simulation by `frames` fixed steps of `dt` seconds.
+     * Makes "travel over a fixed number of frames" measurable independently of
+     * how fast the GPU happens to be presenting.
+     */
+    stepWalk(dt = 1 / 60, frames = 60) {
+      const st = fp.state;
+      const a = st.pos.clone();
+      const eyes = [], speeds = [];
+      for (let i = 0; i < frames; i++) {
+        fp.update(dt);
+        eyes.push(Number(st.eye.toFixed(5)));
+        speeds.push(Number(st.speed.toFixed(5)));
+      }
+      return {
+        dist: Math.hypot(st.pos.x - a.x, st.pos.z - a.z),
+        simTime: dt * frames, frames, eyes, speeds,
+        speed: st.speed, eye: st.eye, fov: st.fov,
+      };
+    },
+    getWalkState() {
+      const st = fp.state;
+      return {
+        speed: st.speed, speedTarget: st.speedTarget,
+        eye: st.eye, eyeTarget: st.eyeTarget,
+        fov: st.fov, fovTarget: st.fovTarget,
+        sprint: st.sprint, crouch: st.crouch,
+        yaw: st.yaw, pitch: st.pitch,
+        pos: { x: st.pos.x, y: st.pos.y, z: st.pos.z },
+        limits: { walk: WALK_MPS, sprint: SPRINT_MPS, crouch: CROUCH_MPS, eye: EYE_STAND_M, eyeCrouch: EYE_CROUCH_M },
+      };
+    },
+    getCameraState() {
+      return {
+        view: S.view,
+        theta: orbit.state.theta, phi: orbit.state.phi, distance: orbit.state.distance,
+        desired: { ...orbit.state.desired },
+        clamp: { minPhi: orbit.state.minPhi, maxPhi: orbit.state.maxPhi },
+        dragging: !!orbit.state.dragging,
+        target: { x: orbit.state.target.x, y: orbit.state.target.y, z: orbit.state.target.z },
+        position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+        plan: { cx: plan.state.cx, cz: plan.state.cz, halfH: plan.state.halfH, dragging: plan.isDragging() },
+      };
+    },
+    getGizmoState() {
+      const h = gizmo.activeHandle();
+      return {
+        visible: gizmo.visible, dragging: gizmo.isDragging(),
+        handle: h ? h.id : null, scale: gizmo.group.scale.x,
+        mode: gizmo.getMode(), spanPx: GIZMO_SPAN_PX,
+        target: gizmo.target,
+        handles: gizmo.handles.map((x) => ({ id: x.id, kind: x.kind, axis: x.axis, visible: x.pick.visible })),
+      };
+    },
+    /** Screen (client) coords of an item's world origin, for tests + tooling. */
+    screenOf(instance_id, opts = {}) {
+      const rec = S.instances.get(instance_id);
+      if (!rec) return null;
+      const frac = opts.heightFrac || 0;
+      const v = new THREE.Vector3(
+        rec.placement.x_mm * MM,
+        (elevOf(rec) + (rec.item.dims_mm.h || 0) * frac) * MM,
+        -rec.placement.y_mm * MM,
+      );
+      return worldToClient(v);
+    },
+    screenOfWorld(x, y, z) { return worldToClient(new THREE.Vector3(x, y, z)); },
+    /** Client coords of a probe point on a gizmo handle (tests + tooling). */
+    gizmoProbe(id, deg = 0) {
+      if (!gizmo.visible) return null;
+      gizmo.update(camera, size.h);
+      const s = gizmo.group.scale.x;
+      const o = gizmo.group.position;
+      const a = deg * D2R;
+      let w = null;
+      if (id === 'planar') w = o.clone();
+      else if (id === 'axis-x') w = o.clone().add(new THREE.Vector3(0.55 * s, 0, 0));
+      else if (id === 'axis-y') w = o.clone().add(new THREE.Vector3(0, 0.55 * s, 0));
+      else if (id === 'axis-z') w = o.clone().add(new THREE.Vector3(0, 0, 0.55 * s));
+      else if (id === 'rot-y') w = o.clone().add(new THREE.Vector3(Math.cos(a) * s, 0, -Math.sin(a) * s));
+      else if (id === 'rot-x') w = o.clone().add(new THREE.Vector3(0, Math.sin(a) * 0.62 * s, -Math.cos(a) * 0.62 * s));
+      else if (id === 'rot-z') w = o.clone().add(new THREE.Vector3(Math.cos(a) * 0.62 * s, Math.sin(a) * 0.62 * s, 0));
+      if (!w) return null;
+      const c = worldToClient(w);
+      return { ...c, world: { x: w.x, y: w.y, z: w.z }, scale: s };
+    },
+    /** Floor-plane world point under a client cursor position. */
+    worldUnderCursor(clientX, clientY) {
+      const r = renderer.domElement.getBoundingClientRect();
+      raycaster.setFromCamera(new THREE.Vector2(
+        ((clientX - r.left) / r.width) * 2 - 1,
+        -((clientY - r.top) / r.height) * 2 + 1,
+      ), camera);
+      const hit = new THREE.Vector3();
+      if (!raycaster.ray.intersectPlane(floorPlane, hit)) return null;
+      return { x: hit.x, y: hit.y, z: hit.z };
+    },
+    /** What a click at these client coords would select. */
+    pickAt(clientX, clientY) {
+      const f = pickFurniture({ clientX, clientY });
+      return f ? { instance_id: f.id, distance: f.distance, rug: f.rug } : null;
+    },
+    /** SPEC2 §F check: is every OBB corner inside the floor polygon? */
+    isInBounds(instance_id) {
+      const rec = S.instances.get(instance_id || S.selection);
+      if (!rec) return null;
+      return obbInsideRoom(rec.placement, rec.item, S.room, 1.5);
+    },
+    obbCornersOf(instance_id) {
+      const rec = S.instances.get(instance_id || S.selection);
+      if (!rec) return null;
+      return obbCorners(footprintOBB(rec.placement, rec.item));
+    },
+
     // --- editor extras used by the demo harness ---------------------------
     undo, redo,
     clearHistory() { S.undo.length = 0; S.redo.length = 0; return api; },
-    _debug: () => ({ drag: { ...drag }, mode: S.mode, view: S.view, undo: S.undo.length }),
+    _debug: () => ({
+      drag: { active: drag.active, kind: drag.kind, id: drag.id, moved: drag.moved, moves: drag.moves, free: drag.free },
+      mode: S.mode, view: S.view, undo: S.undo.length, redo: S.redo.length,
+      gizmo: { visible: gizmo.visible, dragging: gizmo.isDragging(), scale: gizmo.group.scale.x },
+      camera: { phi: orbit.state.phi, distance: orbit.state.distance, dragging: !!orbit.state.dragging },
+    }),
     canUndo: () => S.undo.length > 0,
     canRedo: () => S.redo.length > 0,
     getViolations: () => S.violations.map((v) => ({ ...v })),
@@ -900,14 +1397,23 @@ export function createEditor({
       if (!p || p.locked) return false;
       pushHistory();
       p.rot_deg = ((Math.round(deg) % 360) + 360) % 360;
+      // a rotation near a wall can swing a corner outside the polygon
+      const rc = S.instances.get(instance_id);
+      const cc = constrainProgrammatic(rc, { x_mm: p.x_mm, y_mm: p.y_mm, rot_deg: p.rot_deg });
+      p.x_mm = cc.x_mm; p.y_mm = cc.y_mm;
       syncOne(instance_id); emitChange();
       return true;
     },
     setPosition(instance_id, x_mm, y_mm) {
       const p = findPlacement(instance_id);
       if (!p || p.locked) return false;
+      const rec = S.instances.get(instance_id);
       pushHistory();
-      p.x_mm = Math.round(x_mm); p.y_mm = Math.round(y_mm);
+      // SPEC2 §F applies to the API too, not just to dragging. Writing raw
+      // coordinates here let callers (and the AI seeding path) push a piece
+      // clean outside the plan — `setPosition(id, 99999, 99999)` used to stick.
+      const c = constrainProgrammatic(rec, { x_mm, y_mm, rot_deg: p.rot_deg || 0 });
+      p.x_mm = c.x_mm; p.y_mm = c.y_mm;
       syncOne(instance_id); emitChange();
       return true;
     },
@@ -948,6 +1454,53 @@ export function createEditor({
     get scene() { return scene; },
     get renderer() { return renderer; },
     get camera() { return camera; },
+    /**
+     * §G3 — put a user photo in a poster/frame/canvas. 25 catalog items (ids
+     * starting `ai-`) carry an `image_slot` part. The image is aspect-fit via the
+     * texture matrix, so a 3:2 photo letterboxes inside a square frame instead of
+     * stretching.
+     */
+    setInstanceImage(instance_id, imageOrURL) {
+      const rec = S.instances.get(instance_id || S.selection);
+      if (!rec) return false;
+      const ok = setProxyImage(rec.group, imageOrURL);
+      rig.invalidateShadows();
+      return ok;
+    },
+    clearInstanceImage(instance_id) {
+      const rec = S.instances.get(instance_id || S.selection);
+      if (!rec) return false;
+      const ok = clearProxyImage(rec.group);
+      rig.invalidateShadows();
+      return ok;
+    },
+    /**
+     * Graphics quality tier. The §G realism layer (PBR maps + IBL environment +
+     * soft shadows) costs roughly 5x the frame time of flat materials. On a GPU
+     * that is irrelevant; on a software rasteriser (or a weak integrated GPU) it
+     * is the difference between usable and not, so the host page can step down.
+     *   high   — everything on (default)
+     *   medium — shadows off, maps + environment kept
+     *   low    — shadows + environment off, pixel ratio 1
+     */
+    setQualityTier(tier) {
+      const t = ['high', 'medium', 'low'].includes(tier) ? tier : 'high';
+      S.qualityTier = t;
+      renderer.shadowMap.enabled = t === 'high';
+      if (t === 'high') { rig.setQuality('high'); rig.invalidateShadows(); }
+      scene.environment = t === 'low' ? null : env.texture;
+      renderer.setPixelRatio(t === 'low' ? 1 : Math.min(2, window.devicePixelRatio || 1));
+      scene.traverse((o) => {
+        if (!o.material) return;
+        for (const m of [].concat(o.material)) m.needsUpdate = true;
+      });
+      resize();
+      return api;
+    },
+    getQualityTier() { return S.qualityTier || 'high'; },
+    /** Shadow maps render on demand; call this after moving geometry. */
+    invalidateShadows() { rig.invalidateShadows(); return api; },
+    setShadowQuality(q) { rig.setQuality(q); return api; },
     get three() { return THREE; },
     fmtLen,
   };
