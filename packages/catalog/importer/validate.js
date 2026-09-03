@@ -227,6 +227,7 @@ for (const it of items) {
     if (pt.shape === 'cyl' && pt.size[0] !== pt.size[1]) err(id, 'PROXY_CYL', `${tag}: cyl size must be [dia, dia, height]`);
     if (pt.shape === 'sphere' && !(pt.size[0] === pt.size[1] && pt.size[1] === pt.size[2])) err(id, 'PROXY_SPHERE', `${tag}: sphere size must be cubic`);
     if (pt.shape === 'plane' && pt.size[2] !== 0) err(id, 'PROXY_PLANE', `${tag}: plane size[2] must be 0`);
+    if ('image_slot' in pt && typeof pt.image_slot !== 'boolean') err(id, 'IMAGE_SLOT', `${tag}: image_slot must be boolean`);
     if (pt.shape !== 'plane') volume += (2 * hx) * (2 * hy) * (2 * hz);
   });
   // the proxy must actually occupy the declared envelope, not float as a token sliver
@@ -236,9 +237,18 @@ for (const it of items) {
   const topReach = Math.max(...parts.map((pt) => pt.pos[2] + partHalfExtents(pt)[2]));
   if (topReach < h * 0.8) warn(id, 'PROXY_SHORT', `tallest primitive reaches only ${Math.round(topReach)}mm of ${h}mm`);
 
+  /* 7b. SPEC2 G3 image slots -- anything tagged image-slot must expose exactly one */
+  const slots = parts.filter((pt) => pt.image_slot === true);
+  if (it.tags.includes('image-slot') && slots.length === 0) {
+    err(id, 'IMAGE_SLOT', 'tagged image-slot but no proxy part carries "image_slot": true');
+  }
+  if (slots.length && !it.tags.includes('image-slot')) {
+    warn(id, 'IMAGE_SLOT', `${slots.length} image_slot part(s) but the item is not tagged image-slot`);
+  }
+
   /* 8. commercial metadata */
   if (!it.colorways.length) err(id, 'COLORWAYS', 'at least one colorway required');
-  if (it.price_usd <= 0) warn(id, 'PRICE', 'price_usd is 0');
+  if (it.price_usd != null && it.price_usd <= 0) warn(id, 'PRICE', 'price_usd is 0');
   if (!it.tags.length) err(id, 'TAGS', 'at least one tag required');
 }
 

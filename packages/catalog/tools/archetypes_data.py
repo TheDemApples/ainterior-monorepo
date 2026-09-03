@@ -113,11 +113,26 @@ A = {
  "wall_shelf":       {"c":(400,0,0,0),      "p":{"against_wall":True,"wall_offset_mm":0,"corner_ok":True,"center_ok":False,
                                                  "wall_mounted":True,"mount_h_mm":1400},
                       "hints":{"zone":"storage","anchor":False,"faces":"room","pairs_with":["art_frame"],"min_room_area_m2":0.0,"no_collider":True}},
+ # ---------------------------------------------------------------- SPEC2 I2 additions (generic defaults)
+ "monitor":          {"c":(80,50,50,50),   "p":{"against_wall":False,"wall_offset_mm":30,"corner_ok":False,"center_ok":True},
+                      "hints":{"zone":"work","anchor":False,"faces":"chair","pairs_with":["desk","office_chair"],"min_room_area_m2":1.0}},
+ "appliance":        {"c":(300,50,50,50),  "p":{"against_wall":True,"wall_offset_mm":30,"corner_ok":True,"center_ok":True},
+                      "hints":{"zone":"utility","anchor":False,"faces":"room","pairs_with":["kitchen_island","desk"],"min_room_area_m2":1.0}},
+ "rack":             {"c":(500,20,50,50),  "p":{"against_wall":True,"wall_offset_mm":20,"corner_ok":True,"center_ok":True},
+                      "hints":{"zone":"utility","anchor":False,"faces":"room","pairs_with":["wardrobe"],"min_room_area_m2":1.5}},
+ "cushion":          {"c":(200,200,200,200),"p":{"against_wall":False,"wall_offset_mm":0,"corner_ok":True,"center_ok":True},
+                      "hints":{"zone":"seating","anchor":False,"faces":"free","pairs_with":["rug","coffee_table"],"min_room_area_m2":2.0}},
+ "bike":             {"c":(600,20,100,100),"p":{"against_wall":True,"wall_offset_mm":30,"corner_ok":True,"center_ok":False},
+                      "hints":{"zone":"circulation","anchor":False,"faces":"wall","pairs_with":[],"min_room_area_m2":3.0}},
+ "curtain_rod":      {"c":(0,0,0,0),       "p":{"against_wall":True,"wall_offset_mm":0,"corner_ok":False,"center_ok":False,"wall_mounted":True,"mount_h_mm":2250},
+                      "hints":{"zone":"window","anchor":False,"faces":"room","pairs_with":["curtain"],"min_room_area_m2":0.0}},
+ "string_lights":    {"c":(0,0,0,0),       "p":{"against_wall":False,"wall_offset_mm":0,"corner_ok":True,"center_ok":True,"ceiling_mounted":True},
+                      "hints":{"zone":"ambient","anchor":False,"faces":"free","pairs_with":[],"min_room_area_m2":0.0}},
 }
+
 
 CATEGORIES = ["seating","tables","beds","storage","desks","lighting","rugs","decor","appliance","outdoor","kids"]
 
-# Sanity envelopes used by validate.js: archetype -> {w:[min,max], d:[...], h:[...], seat_h:[...]}
 SANITY = {
  "sofa_2seat":       {"w":[1300,2050],"d":[750,1100],"h":[600,1100],"seat_h":[380,500]},
  "sofa_3seat":       {"w":[1900,2600],"d":[800,1150],"h":[600,1150],"seat_h":[380,500]},
@@ -144,7 +159,7 @@ SANITY = {
  "sideboard":        {"w":[900,2100],"d":[350,600],"h":[600,1100],"seat_h":None},
  "cabinet":          {"w":[300,1200],"d":[250,600],"h":[500,1500],"seat_h":None},
  "tv_bench":         {"w":[700,2400],"d":[200,600],"h":[300,700],"seat_h":None},
- "storage_box":      {"w":[150,700],"d":[150,700],"h":[80,450],"seat_h":None},
+ "storage_box":      {"w":[150,800],"d":[150,800],"h":[80,700],"seat_h":None},
  "coffee_table":     {"w":[500,1900],"d":[400,1000],"h":[350,500],"seat_h":None},
  "side_table":       {"w":[300,700],"d":[300,700],"h":[400,750],"seat_h":None},
  "dining_table_rect":{"w":[700,2600],"d":[450,1100],"h":[500,780],"seat_h":None},
@@ -152,7 +167,7 @@ SANITY = {
  "desk":             {"w":[900,1900],"d":[350,900],"h":[700,820],"seat_h":None},
  "console_table":    {"w":[700,1600],"d":[250,500],"h":[700,900],"seat_h":None},
  "kitchen_island":   {"w":[900,2200],"d":[600,1100],"h":[850,960],"seat_h":None},
- "rug":              {"w":[500,4000],"d":[700,5000],"h":[4,60],"seat_h":None},
+ "rug":              {"w":[450,4000],"d":[400,5000],"h":[4,60],"seat_h":None},
  "floor_lamp":       {"w":[150,700],"d":[150,700],"h":[1100,2000],"seat_h":None},
  "table_lamp":       {"w":[120,400],"d":[120,400],"h":[150,700],"seat_h":None},
  "pendant_lamp":     {"w":[150,900],"d":[150,900],"h":[300,2000],"seat_h":None},
@@ -163,4 +178,11 @@ SANITY = {
  "plant":            {"w":[120,900],"d":[120,900],"h":[150,2200],"seat_h":None},
  "curtain":          {"w":[600,3000],"d":[40,250],"h":[1200,3200],"seat_h":None},
  "wall_shelf":       {"w":[300,2000],"d":[80,400],"h":[15,300],"seat_h":None},
+ "monitor":          {"w":[280,900],"d":[100,360],"h":[250,700],"seat_h":None},
+ "appliance":        {"w":[100,800],"d":[100,800],"h":[60,1500],"seat_h":None},
+ "rack":             {"w":[250,1600],"d":[250,900],"h":[120,1900],"seat_h":None},
+ "cushion":          {"w":[300,1300],"d":[300,1300],"h":[100,900],"seat_h":None},
+ "bike":             {"w":[350,1900],"d":[250,700],"h":[600,1250],"seat_h":None},
+ "curtain_rod":      {"w":[400,3000],"d":[40,200],"h":[20,150],"seat_h":None},
+ "string_lights":    {"w":[1000,6000],"d":[20,250],"h":[100,1200],"seat_h":None},
 }

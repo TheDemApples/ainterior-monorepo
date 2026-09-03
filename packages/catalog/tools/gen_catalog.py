@@ -3,8 +3,10 @@
 import json, os, sys, re
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from items_data import ITEMS, P
+from ai_items_data import AI_ITEMS, AIP
 from archetypes_data import A, CATEGORIES, SANITY
 import proxy_builders as B
+import ai_proxy_builders as AB
 
 OUT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -175,8 +177,92 @@ def make_item(it):
     }
 
 
+# ----------------------------------------------------------------- ainterior generics (SPEC2 I2)
+AI_BUILDERS = {
+    "frame": AB.build_frame, "canvas": AB.build_canvas, "triptych": AB.build_triptych,
+    "wall_clock": AB.build_wall_clock, "board": AB.build_board,
+    "floor_mirror": AB.build_floor_mirror, "floor_cushion": AB.build_floor_cushion,
+    "beanbag": AB.build_beanbag, "pet_bed": AB.build_pet_bed, "hamper": AB.build_hamper,
+    "moving_box": AB.build_moving_box, "storage_bin": AB.build_storage_bin,
+    "waste_bin": AB.build_waste_bin, "umbrella_stand": AB.build_umbrella_stand,
+    "litter_box": AB.build_litter_box, "door_mat": AB.build_door_mat, "yoga_mat": AB.build_yoga_mat,
+    "shoe_rack": AB.build_shoe_rack, "coat_stand": AB.build_coat_stand,
+    "drying_rack": AB.build_drying_rack, "ironing_board": AB.build_ironing_board,
+    "dumbbell_rack": AB.build_dumbbell_rack, "guitar_stand": AB.build_guitar_stand,
+    "keyboard_stand": AB.build_keyboard_stand, "cat_tree": AB.build_cat_tree,
+    "desk_riser": AB.build_desk_riser, "monitor": AB.build_monitor, "monitor_arm": AB.build_monitor_arm,
+    "tower_pc": AB.build_tower_pc, "printer": AB.build_printer, "router": AB.build_router,
+    "desk_lamp": AB.build_desk_lamp, "space_heater": AB.build_space_heater,
+    "pedestal_fan": AB.build_pedestal_fan, "tower_fan": AB.build_tower_fan,
+    "air_purifier": AB.build_air_purifier, "humidifier": AB.build_humidifier,
+    "mini_fridge": AB.build_mini_fridge, "microwave": AB.build_microwave, "kettle": AB.build_kettle,
+    "robot_vacuum": AB.build_robot_vacuum, "vacuum_dock": AB.build_vacuum_dock,
+    "curtain_rod": AB.build_curtain_rod, "roller_blind": AB.build_roller_blind,
+    "radiator_cover": AB.build_radiator_cover, "string_lights": AB.build_string_lights,
+    "hanging_plant": AB.build_hanging_plant, "bike": AB.build_bike, "bike_wall": AB.build_bike_wall,
+    "folding_chair": AB.build_folding_chair, "folding_table": AB.build_folding_table,
+    "plant": B.build_plant,
+}
+
+
+def make_ai_item(r):
+    """Assembles one `ai-` generic item. Same output shape as make_item(), but the source
+    record is a dict so per-item placement overrides (mount heights, ceiling hangs) are
+    expressible without reshaping the 200-row IKEA tuple table."""
+    arch, w, d, h = r["arch"], r["w"], r["d"], r["h"]
+    if arch not in A:
+        raise SystemExit("archetype not in closed set: " + arch)
+    if r["cat"] not in CATEGORIES:
+        raise SystemExit("bad category: " + r["cat"])
+    a = A[arch]
+    cf, cb, cl, cr = a["c"]
+    place = {"against_wall": False, "wall_offset_mm": 0, "corner_ok": False, "center_ok": False,
+             "needs_wall_len_mm": None, "stackable": False, "wall_mounted": False,
+             "mount_h_mm": None, "ceiling_mounted": False}
+    place.update(a["p"])
+    place.update(r.get("place", {}))
+    if place["against_wall"] or place["wall_mounted"]:
+        place["needs_wall_len_mm"] = int(w + 100)
+    else:
+        place["needs_wall_len_mm"] = None
+    if not place["wall_mounted"]:
+        place["mount_h_mm"] = None
+    if arch == "storage_box":
+        place["stackable"] = True
+
+    bname, bargs = r["builder"]
+    fn = AI_BUILDERS[bname]
+    if bname == "folding_chair":
+        parts = fn(w, d, h, r["seat_h"])
+    else:
+        parts = fn(w, d, h, **bargs)
+    # The renderer / editor camera looks from +x,+y: the existing builders put every
+    # visible front face on +y (see build_art_frame, build_tv_bench). The ai_ builders are
+    # authored front-at--y for readability, so mirror them onto the house convention here.
+    for pt in parts:
+        pt["pos"][1] = -pt["pos"][1]
+    parts = clamp_parts(parts, w, d, h)
+    price = r.get("price", None)
+    return {
+        "id": r["id"], "brand": "ainterior", "name": r["name"], "product_type": r["ptype"],
+        "sku": None, "category": r["cat"], "archetype": arch,
+        "dims_mm": {"w": int(w), "d": int(d), "h": int(h)},
+        "seat_h_mm": int(r["seat_h"]) if (r.get("seat_h") and arch in SEAT_ARCH) else None,
+        "footprint": r["fp"], "l_shape_mm": None,
+        "clearance_mm": {"front": cf, "back": cb, "left": cl, "right": cr},
+        "placement": place,
+        "colorways": [{"name": n, "hex": hx} for (n, hx) in AIP[r["pal"]]],
+        "price_usd": int(price) if price is not None else None,
+        "url": None,
+        "tags": ["ainterior", "generic"] + list(r["tags"]),
+        "dims_confidence": "high",
+        "dims_note": r.get("note") or None,
+        "proxy": {"parts": parts},
+    }
+
+
 def main():
-    items = [make_item(it) for it in ITEMS]
+    items = [make_item(it) for it in ITEMS] + [make_ai_item(r) for r in AI_ITEMS]
     ids = [i["id"] for i in items]
     assert len(ids) == len(set(ids)), "duplicate ids: " + str([x for x in ids if ids.count(x) > 1])
     catalog = {"version": 1, "generated_by": "packages/catalog/tools/gen_catalog.py",
@@ -209,6 +295,7 @@ def main():
             "color": {"oneOf": [{"enum": ["body", "wood", "metal", "glass", "fabric", "dark"]},
                                 {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"}]},
             "radius": {"type": "integer", "minimum": 0},
+            "image_slot": {"type": "boolean"},
         },
     }
     schema = {
@@ -261,7 +348,7 @@ def main():
                 "type": "object", "additionalProperties": False, "required": ["name", "hex"],
                 "properties": {"name": {"type": "string", "minLength": 1},
                                "hex": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"}}}},
-            "price_usd": {"type": "integer", "minimum": 0, "maximum": 100000},
+            "price_usd": {"type": ["integer", "null"], "minimum": 0, "maximum": 100000},
             "url": {"type": ["string", "null"]},
             "tags": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
             "dims_confidence": {"enum": ["high", "medium", "low"]},

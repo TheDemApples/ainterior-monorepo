@@ -59,6 +59,9 @@
     "radius": {
      "type": "integer",
      "minimum": 0
+    },
+    "image_slot": {
+     "type": "boolean"
     }
    }
   }
@@ -126,6 +129,7 @@
   },
   "archetype": {
    "enum": [
+    "appliance",
     "armchair",
     "art_frame",
     "bar_stool",
@@ -134,6 +138,7 @@
     "bed_queen",
     "bed_single",
     "bench",
+    "bike",
     "bookcase",
     "cabinet",
     "chaise",
@@ -141,6 +146,8 @@
     "console_table",
     "crib",
     "curtain",
+    "curtain_rod",
+    "cushion",
     "desk",
     "dining_chair",
     "dining_table_rect",
@@ -150,11 +157,13 @@
     "kitchen_island",
     "loveseat",
     "mirror",
+    "monitor",
     "nightstand",
     "office_chair",
     "ottoman",
     "pendant_lamp",
     "plant",
+    "rack",
     "rug",
     "shelf_unit",
     "side_table",
@@ -164,6 +173,7 @@
     "sofa_sectional_l",
     "stool",
     "storage_box",
+    "string_lights",
     "table_lamp",
     "tv",
     "tv_bench",
@@ -348,7 +358,10 @@
    }
   },
   "price_usd": {
-   "type": "integer",
+   "type": [
+    "integer",
+    "null"
+   ],
    "minimum": 0,
    "maximum": 100000
   },
