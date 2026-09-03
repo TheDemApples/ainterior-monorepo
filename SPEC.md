@@ -175,7 +175,13 @@ nightstand dresser wardrobe bookcase shelf_unit sideboard cabinet tv_bench stora
 coffee_table side_table dining_table_rect dining_table_round desk console_table kitchen_island
 rug floor_lamp table_lamp pendant_lamp wall_lamp
 tv art_frame mirror plant curtain wall_shelf
+monitor appliance rack cushion bike curtain_rod string_lights
 ```
+
+> The final line was added in v2 alongside the ainterior generic range (SPEC2 §I2): brand-agnostic
+> monitors, small appliances, racks/stands, floor cushions, bicycles, curtain rods and string lights
+> had no honest home in the original set. `packages/catalog/archetypes.json` and the catalog
+> validator derive from the same source, so all three stay in step.
 
 ### 4.4 Room
 

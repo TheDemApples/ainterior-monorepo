@@ -214,3 +214,59 @@ button, input, select { font-family: inherit; color: inherit; }
 }
 .bp-host svg { display: block; width: 100%; height: auto; }
 .bpdlg .snapdlg-head { flex-wrap: wrap; gap: 10px; }
+
+/* ── resizable side panels (#5) ───────────────────────────────────────────────
+   .main is a 5-column grid: panel | resizer | viewport | resizer | panel.
+   Widths live in CSS custom properties so the drag handler only writes a var. */
+.main {
+  grid-template-columns:
+    var(--panel-l, 264px) 6px 1fr 6px var(--panel-r, 280px) !important;
+}
+.resizer {
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  position: relative;
+  transition: background .18s ease;
+  touch-action: none;
+}
+.resizer::after {
+  content: "";
+  position: absolute; inset: 50% auto auto 50%;
+  width: 2px; height: 26px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: var(--line-2);
+  transition: background .18s ease, height .18s ease;
+}
+.resizer:hover { background: rgba(59,110,246,.10); }
+.resizer:hover::after { background: var(--blueprint); height: 42px; }
+.resizer.is-dragging { background: rgba(59,110,246,.18); }
+.resizer.is-dragging::after { background: var(--blueprint); height: 60px; }
+.resizer:focus-visible { outline: 2px solid var(--blueprint); outline-offset: -2px; }
+body.is-resizing { cursor: col-resize; user-select: none; }
+body.is-resizing .viewport { pointer-events: none; }
+
+@media (max-width: 1080px) {
+  .main { grid-template-columns: var(--panel-l, 220px) 6px 1fr !important; }
+  #resizeR { display: none; }
+}
+@media (max-width: 720px) {
+  .main { grid-template-columns: 1fr !important; }
+  .resizer { display: none; }
+}
+
+/* ── catalog thumbnails (#6) ─────────────────────────────────────────────── */
+.cat-thumb {
+  width: 40px; height: 40px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  background: var(--surface-3) center/cover no-repeat;
+  border: 1px solid var(--line);
+  image-rendering: auto;
+}
+.cat-item { align-items: center; gap: 9px; }
+.cat-item .cat-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+.cat-item .nm { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cat-item .nm > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

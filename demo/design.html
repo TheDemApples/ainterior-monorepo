@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ainterior — floorplan designer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="design.css" />
+</head>
+<body>
+<div id="app" class="app">
+
+  <!-- ───────────────────────────── topbar ───────────────────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark"></span>
+      <span class="wordmark">ainterior</span>
+      <span class="eyebrow">floorplan designer</span>
+    </div>
+
+    <div class="bar-group" id="stepNav" hidden>
+      <span class="bar-label">step</span>
+      <div class="seg" id="stepSeg">
+        <button data-step="entry" type="button" aria-pressed="false">start</button>
+        <button data-step="build" class="on" type="button" aria-pressed="true">geometry</button>
+        <button data-step="brief" type="button" aria-pressed="false">furniture</button>
+      </div>
+    </div>
+
+    <div class="bar-group" id="unitNav" hidden>
+      <span class="bar-label">units</span>
+      <div class="seg" id="unitSeg">
+        <button data-unit="mm" type="button" aria-pressed="false">mm</button>
+        <button data-unit="cm" class="on" type="button" aria-pressed="true">cm</button>
+        <button data-unit="ft" type="button" aria-pressed="false">ft-in</button>
+      </div>
+    </div>
+
+    <div class="bar-spacer"></div>
+
+    <div class="bar-group" id="histNav" hidden>
+      <button class="btn" id="undoBtn" type="button" title="Undo (⌘Z)">↶ undo</button>
+      <button class="btn" id="redoBtn" type="button" title="Redo (⇧⌘Z)">↷ redo</button>
+    </div>
+    <div class="bar-group">
+      <button class="btn ghost" id="resetBtn" type="button" hidden title="Discard this plan">reset</button>
+      <button class="btn" id="nextBtn" type="button" hidden>furniture →</button>
+      <button class="btn primary" id="openBtn" type="button" hidden>open in studio →</button>
+    </div>
+  </header>
+
+  <!-- ───────────────────────────── (a)/(b) entry ───────────────────────────── -->
+  <main class="entry" id="entryView">
+    <div class="entry-inner">
+      <p class="eyebrow reveal">step 01 — where do you want to start?</p>
+      <h1 class="reveal">Design your space in <span class="em">real</span> dimensions.</h1>
+      <p class="lede reveal">Start from a preset plan and go straight to the studio, or draw your own —
+        multiple rooms, real millimetres, doors and windows where you actually want them.</p>
+
+      <div class="choice-grid">
+        <section class="card reveal">
+          <span class="eyebrow">option a</span>
+          <h2>Try a preset</h2>
+          <p class="note">Complete, validated plans. Pick one and it loads straight into the 3D studio.</p>
+          <div class="preset-grid" id="presetGrid"></div>
+        </section>
+
+        <section class="card reveal">
+          <span class="eyebrow">option b</span>
+          <h2>Design my own</h2>
+          <p class="note">A 2D plan canvas with a 100&nbsp;mm snap grid. Everything is stored in integer millimetres.</p>
+          <div class="own">
+            <ul>
+              <li>Drag to place a room; drag its edges, corners or body to reshape it.</li>
+              <li>Rooms snap to each other — abutting edges become one interior wall.</li>
+              <li>Type a width and watch the wall <em>glide</em> to the new size.</li>
+              <li>Click a wall to drop a door or window; drag it along the wall.</li>
+              <li>Then brief the furniture per room from the real catalog.</li>
+            </ul>
+            <button class="btn primary" id="startBlank" type="button">Start a blank plan →</button>
+            <div class="draft-note" id="draftNote" hidden>
+              <span id="draftText" class="dim"></span>
+              <div class="bar-group">
+                <button class="btn" id="resumeDraft" type="button">Resume draft</button>
+                <button class="btn ghost" id="discardDraft" type="button">Discard</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <!-- ───────────────────────────── builder ───────────────────────────── -->
+  <main class="build" id="buildView" hidden>
+
+    <!-- rooms -->
+    <aside class="panel panel-rooms" aria-label="Rooms">
+      <div class="panel-head"><span class="eyebrow">rooms</span><span class="mono dim" id="roomCount">—</span></div>
+      <div class="panel-body">
+        <div class="room-list" id="roomList"></div>
+        <button class="btn sm" id="addRoomBtn" type="button">+ add a room</button>
+        <div class="grp">
+          <div class="grp-head"><span class="eyebrow">plan total</span></div>
+          <div class="grp-body">
+            <div class="metrics">
+              <div class="metric"><span class="k">area</span><span class="v" id="totArea">—</span></div>
+              <div class="metric"><span class="k">area ft²</span><span class="v" id="totAreaFt">—</span></div>
+              <div class="metric"><span class="k">envelope</span><span class="v" id="totEnv">—</span></div>
+              <div class="metric"><span class="k">int. walls</span><span class="v" id="totWalls">—</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- canvas -->
+    <section class="stage">
+      <div class="stage-tools">
+        <span class="bar-label">tool</span>
+        <div class="seg" id="toolSeg">
+          <button data-tool="select" class="on" type="button" aria-pressed="true">select</button>
+          <button data-tool="room" type="button" aria-pressed="false">+ room</button>
+          <button data-tool="door" type="button" aria-pressed="false">+ door</button>
+          <button data-tool="window" type="button" aria-pressed="false">+ window</button>
+        </div>
+        <div class="bar-spacer"></div>
+        <button class="btn sm" id="fitBtn" type="button">fit</button>
+        <button class="btn sm" id="delBtn" type="button">delete</button>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="plan" aria-label="Floorplan canvas"></canvas>
+        <div class="hud">
+          <span class="chip" id="hudCursor">— , —</span>
+          <span class="chip" id="hudSnap">grid <b>100mm</b></span>
+        </div>
+        <p class="stage-help mono"><b>drag empty</b> new room · <b>drag body</b> move ·
+          <b>drag edge/corner</b> resize · <b>click wall</b> door/window · <b>del</b> remove · <b>⌘Z</b> undo</p>
+      </div>
+    </section>
+
+    <!-- inspector -->
+    <aside class="panel" aria-label="Inspector">
+      <div class="panel-head"><span class="eyebrow">selection</span><span class="mono dim" id="selName">—</span></div>
+      <div class="panel-body" id="inspector"></div>
+      <div class="panel-foot">
+        <div class="panel-head" style="padding:0 0 6px;border:0">
+          <span class="eyebrow">validation</span><span class="mono dim" id="issueCount">—</span>
+        </div>
+        <div class="issues" id="issues"></div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ───────────────────────────── furniture brief ───────────────────────────── -->
+  <main class="brief" id="briefView" hidden>
+    <aside class="brief-rooms" aria-label="Brief rooms">
+      <div class="panel-head"><span class="eyebrow">brief per room</span><span class="mono dim" id="briefTotal">0</span></div>
+      <div class="panel-body">
+        <div class="room-list" id="briefRoomList"></div>
+      </div>
+      <div class="brief-picked" id="briefPicked"></div>
+    </aside>
+    <section class="brief-main">
+      <div class="brief-tools">
+        <div class="panel-head" style="padding:0;border:0">
+          <span class="eyebrow">catalog — <span id="briefRoomName">—</span></span>
+          <span class="mono dim" id="catCount">—</span>
+        </div>
+        <input id="catSearch" class="input" type="search" placeholder="Search name, type, tag…" aria-label="Search catalog" />
+        <div class="chips" id="catChips"></div>
+      </div>
+      <div class="cat-list" id="catList" role="list"></div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script type="module" src="design.js"></script>
+</body>
+</html>

@@ -22,7 +22,8 @@ does not fit, we say so — we never shrink a sofa or overlap two pieces to make
 
 | Path | What it is |
 |---|---|
-| `demo/` | **Runnable, no build step.** `index.html` = marketing site, `editor.html` = the 3D studio. |
+| `demo/` | **Runnable, no build step.** `index.html` = marketing, `design.html` = floorplan designer, `editor.html` = the 3D studio. |
+| `packages/floorplan/` | Multi-room floorplan model, validation, presets, and `floorplanToShell` |
 | `packages/catalog/` | 201 real IKEA products, mm-accurate, with procedural 3D proxy geometry |
 | `packages/layout-engine/` | The AI layout solver — constraint-based, deterministic, dependency-free |
 | `packages/blueprint/` | Annotated floor-plan SVG + FF&E schedule generator |
@@ -34,6 +35,7 @@ does not fit, we say so — we never shrink a sofa or overlap two pieces to make
 | `tests/` | Cross-package integration, vision, recon suites |
 | `tools/` | Schema validator, demo browser verification, catalog module generator |
 | `SPEC.md` | The canonical contract every module conforms to |
+| `SPEC2.md` | Addendum v2: input model, gizmo, picking, camera, bounds, realism, designer |
 
 ## Run the demo
 
@@ -41,8 +43,13 @@ does not fit, we say so — we never shrink a sofa or overlap two pieces to make
 # any static server; or just open demo/index.html from the filesystem
 python3 -m http.server 8000
 # → http://localhost:8000/demo/index.html   (marketing)
-# → http://localhost:8000/demo/editor.html  (the studio)
+# → http://localhost:8000/demo/design.html  (floorplan designer — presets or build your own)
+# → http://localhost:8000/demo/editor.html  (the 3D studio)
 ```
+
+The intended path is **marketing → designer → studio**. The designer hands off through
+`localStorage['ainterior.floorplan.handoff']` plus `editor.html?plan=handoff`; the contract is in
+`packages/floorplan/README.md`.
 
 No install, no bundler. Three.js and Tailwind come from pinned CDN URLs. The catalog ships as an ES
 module (`demo/catalog-data.js`) rather than fetched JSON specifically so `file://` works too.
@@ -72,6 +79,30 @@ node packages/catalog/importer/validate.js && psql < packages/catalog/seed.sql
 
 See `BACKEND.md` for the auth model, the RLS threat model for anonymous phone uploads, and flow
 diagrams.
+
+## Studio controls
+
+| Input | 3D | Plan | Walk |
+|---|---|---|---|
+| Left click | select only | select only | — |
+| Left drag on a gizmo handle | move / rotate | move / rotate | — |
+| Right drag | orbit (never selects) | pan | look |
+| Middle drag | pan — **drag down moves forward** | pan | — |
+| Wheel | zoom to cursor | zoom to cursor | — |
+| `Ctrl` + drag | free transform (no snapping) | same | — |
+| `Shift` / `Ctrl` or `C` | — | — | sprint / crouch |
+
+Selection gets an explicit gizmo: three axis arrows, a planar floor handle for everyday 2D moves,
+and three rotation rings. It stays a constant ~110px on screen at any zoom, and drags are computed
+projectively from a fixed anchor, so the piece tracks the pointer instead of shaking. Snapping is
+10mm / 15°; hold `Ctrl` to bypass. Furniture cannot leave the floor polygon — it slides along walls
+and snaps flush within 120mm.
+
+**Graphics tiers.** The realism layer (PBR maps, IBL environment, soft shadows) costs roughly 5x the
+frame time of flat materials — irrelevant on a GPU, decisive on a software rasteriser. The studio
+measures actual frame pacing on load (time-bounded, so a slow machine reports slow immediately) and
+steps down to `medium` (no shadows) or `low` (no shadows or environment, pixel ratio 1). Override it
+with the **graphics** control in the toolbar; the choice persists.
 
 ## How the AI layout actually works
 

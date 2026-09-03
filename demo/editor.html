@@ -42,12 +42,23 @@
       <label class="chk"><input type="checkbox" id="clearanceToggle" /> <span>clearances</span></label>
     </div>
 
+    <div class="bar-group">
+      <span class="eyebrow">graphics</span>
+      <div class="seg" id="qualSeg" role="group" aria-label="Graphics quality">
+        <button data-q="auto" class="on" aria-pressed="true" title="Measure and pick automatically">auto</button>
+        <button data-q="high" aria-pressed="false" title="Textures, daylight and soft shadows">high</button>
+        <button data-q="medium" aria-pressed="false" title="No shadows">med</button>
+        <button data-q="low" aria-pressed="false" title="Fastest — flat lighting">low</button>
+      </div>
+    </div>
+
     <div class="bar-spacer"></div>
 
     <div class="bar-group">
       <button class="btn" id="aiBtn" title="Arrange with AI">AI arrange</button>
       <button class="btn" id="undoBtn" title="Undo (⌘Z)">↶ undo</button>
       <button class="btn" id="redoBtn" title="Redo (⇧⌘Z)">↷ redo</button>
+      <a class="btn" href="design.html" title="Design a new floorplan from scratch">new plan</a>
       <button class="btn" id="bpBtn" title="Generate an annotated blueprint">blueprint</button>
       <button class="btn primary" id="snapBtn" title="Render a PNG">snapshot</button>
     </div>
@@ -70,14 +81,21 @@
       <div class="panel-foot mono dim">click to add · drag on floor to move</div>
     </aside>
 
+    <div class="resizer" id="resizeL" role="separator" aria-orientation="vertical"
+         aria-label="Resize catalog panel" tabindex="0"></div>
+
     <!-- viewport -->
     <section class="viewport-wrap">
       <div id="viewport" class="viewport" aria-label="3D viewport"></div>
       <div class="vp-help mono">
-        <b>drag</b> orbit · <b>right-drag</b> pan · <b>wheel</b> zoom · <b>⌘D</b> duplicate ·
-        <b>del</b> remove · <b>esc</b> deselect · <b>alt-drag</b> free · <b>shift</b> free rotate
+        <b>left-click</b> select · <b>right-drag</b> orbit · <b>middle-drag</b> pan ·
+        <b>wheel</b> zoom · <b>gizmo</b> move/rotate · <b>ctrl-drag</b> free ·
+        <b>⌘D</b> duplicate · <b>del</b> remove · <b>esc</b> deselect
       </div>
     </section>
+
+    <div class="resizer" id="resizeR" role="separator" aria-orientation="vertical"
+         aria-label="Resize inspector panel" tabindex="0"></div>
 
     <!-- inspector -->
     <aside class="panel panel-right" aria-label="Inspector">
