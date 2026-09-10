@@ -1075,3 +1075,48 @@ img, svg, canvas { max-width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   .nav__theme, .nav__theme-ico { transition: none; }
 }
+
+/* ── embedded app router ──────────────────────────────────────────────────────
+   The designer and studio open in a full-bleed overlay iframe rather than by
+   navigating the document. Embedded hosts (the Gumloop artifact viewer) serve a
+   single entry point, and a top-level navigation away from it can be reset back
+   to that entry — which reads as "it loaded for a second and threw me back to
+   the homepage". Navigating only the inner frame avoids the whole class.       */
+.approuter {
+  position: fixed; inset: 0; z-index: 9000;
+  background: var(--ink);
+  display: flex; flex-direction: column;
+  opacity: 0;
+  transition: opacity .28s cubic-bezier(.16,1,.3,1);
+}
+.approuter.is-open { opacity: 1; }
+.approuter__bar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 12px;
+  padding: 7px 12px;
+  background: rgba(18,18,21,.9);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+.approuter__back {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--line-2); background: transparent;
+  color: var(--bone); font: inherit; font-size: 12px; cursor: pointer;
+  transition: background .2s ease, transform .2s ease;
+}
+.approuter__back:hover { background: rgba(255,255,255,.07); transform: translateY(-1px); }
+.approuter__back:focus-visible { outline: 2px solid var(--blueprint); outline-offset: 2px; }
+.approuter__title {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted);
+}
+.approuter__frame { flex: 1 1 auto; width: 100%; border: 0; display: block; background: var(--ink); }
+.approuter__spinner {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--muted); font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px; letter-spacing: .1em; pointer-events: none;
+}
+body.approuter-open { overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .approuter { transition: none; } }

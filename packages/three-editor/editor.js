@@ -262,7 +262,12 @@ export function createEditor({
     group.name = 'inst:' + placement.instance_id;
     const hex = (item.colorways && item.colorways[placement.colorway | 0])
       ? item.colorways[placement.colorway | 0].hex : null;
-    const proxy = buildProxy(item, { materials: mats, colorwayHex: hex });
+    // A scanned item (§5.5 photo -> 3D) carries a real reconstructed mesh on
+    // `__mesh` rather than the primitive `proxy.parts` a catalog entry has.
+    // Clone it so several instances of the same scan stay independent.
+    const proxy = item.__mesh
+      ? item.__mesh.clone(true)
+      : buildProxy(item, { materials: mats, colorwayHex: hex });
     enableShadows(proxy);
     // SPEC2 §C.1/§C.2 — proxy meshes are the ONLY pickable geometry.
     proxy.traverse((o) => {
@@ -1498,6 +1503,17 @@ export function createEditor({
       return api;
     },
     getQualityTier() { return S.qualityTier || 'high'; },
+    /**
+     * Register a catalog-shaped item at runtime so `add(id)` can place it.
+     * Used for scanned furniture, which never existed in the shipped catalog.
+     * Pass `__mesh` (a THREE.Object3D) to render real reconstructed geometry.
+     */
+    registerItem(item) {
+      if (!item || !item.id) return false;
+      S.catalog.set(item.id, item);
+      return true;
+    },
+    hasItem(id) { return S.catalog.has(id); },
     /** Shadow maps render on demand; call this after moving geometry. */
     invalidateShadows() { rig.invalidateShadows(); return api; },
     setShadowQuality(q) { rig.setQuality(q); return api; },

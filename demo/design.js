@@ -14,6 +14,28 @@ import {
 } from '../packages/floorplan/index.js';
 import { CATALOG_DATA } from './catalog-data.js';
 
+// Storage must be reached through this shim, never directly. In an embedded
+// artifact/iframe context the origin can be opaque, and there *touching* the
+// `localStorage` property throws SecurityError — before any try around a
+// getItem call would help. Passing `localStorage` as an argument (as the
+// handoff helpers did) throws at the call site for the same reason.
+const SAFE_STORE = (() => {
+  try {
+    const t = '__ai_probe__';
+    localStorage.setItem(t, '1');
+    localStorage.removeItem(t);
+    return localStorage;
+  } catch (e) {
+    const mem = new Map();
+    return {
+      getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+      setItem: (k, v) => { mem.set(k, String(v)); },
+      removeItem: (k) => { mem.delete(k); },
+      __memoryOnly: true,
+    };
+  }
+})();
+
 /* thumbnails are being added by a parallel agent — import defensively (SPEC2 §H) */
 let THUMBS = {};
 try {
@@ -125,11 +147,11 @@ function countTo(el, value, fmt = v => v) {
 
 /* ═══════════════════════ persistence ═══════════════════════ */
 function persist() {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(fp)); } catch { /* quota */ }
+  try { SAFE_STORE.setItem(DRAFT_KEY, JSON.stringify(fp)); } catch { /* quota */ }
 }
 function loadDraft() {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY);
+    const raw = SAFE_STORE.getItem(DRAFT_KEY);
     if (!raw) return null;
     const d = JSON.parse(raw);
     if (!d || !Array.isArray(d.rooms)) return null;
@@ -240,7 +262,7 @@ $('#resumeDraft').addEventListener('click', () => {
   setStep('build');
 });
 $('#discardDraft').addEventListener('click', () => {
-  try { localStorage.removeItem(DRAFT_KEY); } catch {}
+  try { SAFE_STORE.removeItem(DRAFT_KEY); } catch {}
   renderEntry();
 });
 
@@ -1018,7 +1040,7 @@ $('#catSearch').addEventListener('input', e => { catQuery = e.target.value; rend
 /* ═══════════════════════ handoff ═══════════════════════ */
 function openInStudio() {
   rebuildInteriorWalls(fp);
-  const { url } = saveHandoff(fp, localStorage, 'editor.html');
+  const { url } = saveHandoff(fp, SAFE_STORE, 'editor.html');
   const errs = errorsOnly(validateFloorplan(fp)).length;
   toast(errs ? `Opening the studio with ${errs} validation error${errs === 1 ? '' : 's'} flagged…` : 'Handing off to the studio…');
   setTimeout(() => { window.location.href = url; }, REDUCED ? 0 : 450);
@@ -1111,7 +1133,7 @@ window.__design = {
   setStep, fit, draw, openInStudio,
   addRoomAt: (w, d, x, y) => { history.commit(dd => { const r = addRoom(dd, { w_mm: w, d_mm: d, at: [x, y] }); selRoomId = r.id; }); syncFromHistory(); },
   tweenRoom, bboxOf: id => bbox(fp.rooms.find(r => r.id === id).polygon_mm),
-  saveHandoff: () => saveHandoff(fp, localStorage, 'editor.html'),
-  readHandoff: () => readHandoff(localStorage),
+  saveHandoff: () => saveHandoff(fp, SAFE_STORE, 'editor.html'),
+  readHandoff: () => readHandoff(SAFE_STORE),
   HANDOFF_KEY, DRAFT_KEY,
 };
