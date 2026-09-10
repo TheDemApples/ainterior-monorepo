@@ -2,6 +2,14 @@
 import { createEditor, fmtLen } from '../packages/three-editor/editor.js';
 import { SAMPLE_CATALOG } from './sample-catalog.js';
 import { CATALOG_DATA } from './catalog-data.js';
+// Photo -> 3D scanning (SPEC §5.5). Loaded defensively: it reaches a third-party
+// Space over the network, and the studio must still work with no connectivity.
+let initScan = null;
+try {
+  ({ initScan } = await import('./scan.js'));
+} catch (e) {
+  console.warn('[demo] furniture scanning unavailable', e);
+}
 // Product thumbnails (#6). Rendered from each item's proxy geometry and shipped as
 // data URIs in an ES module rather than loose PNGs, because the demo must also run
 // from file:// where fetch() of local files is blocked. Imported defensively so a
@@ -261,6 +269,14 @@ let engineName = '—';
   renderCatalog();
   wireTopbar();
   seedStartingLayout();
+  if (initScan) {
+    try {
+      initScan({ onAdded: (item) => { CATALOG.push(item); catMap.set(item.id, item); } });
+    } catch (e) { console.warn('[demo] scan init failed', e); }
+  } else {
+    const sb = document.getElementById('scanBtn');
+    if (sb) sb.disabled = true;
+  }
   document.body.dataset.ready = '1';
 })();
 
@@ -429,10 +445,14 @@ function renderCatalog() {
     btn.setAttribute('role', 'listitem');
     const hex = (it.colorways && it.colorways[0] && it.colorways[0].hex) || '#888';
     const d = it.dims_mm;
+    // Thumbnails are attached lazily. Painting all 284 data URIs at once decodes
+    // ~284 x 192x192 bitmaps (tens of MB of image memory) for a list where only
+    // a dozen rows are ever on screen — needless pressure in a memory-limited
+    // embed. The observer below fills them in as they scroll into view.
     const thumb = THUMBS[it.id];
     btn.innerHTML =
       (thumb
-        ? `<span class="cat-thumb" style="background-image:url('${thumb}')" aria-hidden="true"></span>`
+        ? `<span class="cat-thumb" data-thumb="${it.id}" style="background:${hex}" aria-hidden="true"></span>`
         : `<span class="cat-thumb" style="background:${hex}" aria-hidden="true"></span>`) +
       `<span class="cat-body">` +
       `<span class="nm"><span class="sw" style="background:${hex}"></span>` +
@@ -450,6 +470,33 @@ function renderCatalog() {
     p.textContent = 'No matches.';
     list.appendChild(p);
   }
+  hydrateThumbs(list);
+}
+
+/** Fill in catalog thumbnails only as their rows scroll into view. */
+let thumbObserver = null;
+function hydrateThumbs(list) {
+  const targets = list.querySelectorAll('.cat-thumb[data-thumb]');
+  if (!('IntersectionObserver' in window)) {
+    for (const el of targets) {
+      const src = THUMBS[el.dataset.thumb];
+      if (src) el.style.backgroundImage = `url('${src}')`;
+      el.removeAttribute('data-thumb');
+    }
+    return;
+  }
+  if (thumbObserver) thumbObserver.disconnect();
+  thumbObserver = new IntersectionObserver((entries, obs) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const el = e.target;
+      const src = THUMBS[el.dataset.thumb];
+      if (src) el.style.backgroundImage = `url('${src}')`;
+      el.removeAttribute('data-thumb');
+      obs.unobserve(el);
+    }
+  }, { root: list, rootMargin: '260px 0px' });
+  for (const el of targets) thumbObserver.observe(el);
 }
 
 // ---------------------------------------------------------------------------
@@ -826,12 +873,20 @@ function wireTopbar() {
   }
 
   async function auto() {
-    const high = await measure();
-    if (high >= 24) { apply('high'); return; }
+    // Probe UP, never down. Booting at full realism means the very first frames
+    // are the most expensive ones the app will ever draw — multi-second main
+    // thread blocks on a software renderer — which is exactly when an embedding
+    // host is most likely to decide the frame is wedged and reload it. Start
+    // cheap, measure, and only climb if the machine can take it.
+    apply('low');
+    const low = await measure();
+    if (low < 20) return;
     apply('medium');
     const med = await measure();
-    if (med >= 20) return;
-    apply('low');
+    if (med < 24) return;
+    apply('high');
+    const high = await measure();
+    if (high < 18) apply('medium');
   }
 
   const run = () => { if (pref === 'auto') auto(); else apply(pref); };
