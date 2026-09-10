@@ -1,21 +1,22 @@
 // services/recon/index.js  -- SPEC §5.5
 // Provider-agnostic 3D reconstruction adapter.
 //
-//   createReconProvider(kind /* "meshy" | "mock" */, cfg) => {
+//   createReconProvider(kind /* "meshy" | "mock" | "huggingface" */, cfg) => {
 //     createRoomFromImages({ images, hints })      => { job_id }
 //     createRoomFromBlueprint({ file, scale_hint }) => { job_id }
 //     createObjectFromImages({ images, name })     => { job_id }
 //     getJob(job_id) => { status, progress, result?, error? }
 //   }
 //
-// MOCK is the default and needs NO API KEY (SPEC §5.5). Swapping to Meshy is a
+// MOCK remains the DEFAULT so the demo keeps working offline (SPEC §5.5). Swapping to Meshy is a
 // config change (RECON_PROVIDER=meshy + MESHY_API_KEY) — the interface is byte
 // identical, so nothing upstream changes.
 
 import { createMockProvider } from './mock.js';
 import { createMeshyProvider } from './meshy.js';
+import { createHuggingFaceProvider } from './huggingface.js';
 
-export const PROVIDERS = ['mock', 'meshy'];
+export const PROVIDERS = ['mock', 'meshy', 'huggingface'];
 export const JOB_STATUSES = ['queued', 'running', 'succeeded', 'failed'];
 
 /** Every provider must expose exactly these methods. Enforced at construction. */
@@ -31,6 +32,14 @@ export function createReconProvider(kind = process.env.RECON_PROVIDER || 'mock',
       break;
     case 'meshy':
       provider = createMeshyProvider(cfg);
+      break;
+    // FREE, no API key: public Hugging Face Space running Hunyuan3D-2.1.
+    // Object scanning only -- it cannot do rooms (see services/recon/RECON.md).
+    // Output is UNSCALED: the caller must apply one real user measurement via
+    // packages/three-editor/mesh-import.js fitToDimension() (SPEC §8.8).
+    case 'huggingface':
+    case 'hf':
+      provider = createHuggingFaceProvider(cfg);
       break;
     default:
       throw new Error(`unknown recon provider "${kind}" (expected one of ${PROVIDERS.join(', ')})`);
