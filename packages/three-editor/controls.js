@@ -94,9 +94,12 @@ export function createOrbitControls(camera, dom, opts = {}) {
     right.normalize();
     const fwd = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), right).normalize();
     // SPEC2 §A/#4b: middle-drag is vertically inverted — a positive (downward)
-    // screen dy advances the camera along its forward vector.
+    // screen dy advances the camera along its forward vector. The horizontal
+    // axis is inverted with it, so middle-drag behaves like grabbing the floor
+    // and pulling it, rather than pushing the camera.
     const fwdSign = state.dragging === 'pan-invert' ? +1 : -1;
-    state.desiredTarget.addScaledVector(right, dx * scale);
+    const rightSign = state.dragging === 'pan-invert' ? -1 : +1;
+    state.desiredTarget.addScaledVector(right, rightSign * dx * scale);
     state.desiredTarget.addScaledVector(fwd, fwdSign * dy * scale);
     state.desiredTarget.y = clamp(state.desiredTarget.y, 0, 3);
   }
