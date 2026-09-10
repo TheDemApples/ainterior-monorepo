@@ -243,3 +243,109 @@ if (document.readyState === 'loading') {
   });
   sync();
 }());
+
+// ── embedded app router ─────────────────────────────────────────────────────
+// Opens design.html / editor.html inside a full-bleed overlay iframe instead of
+// navigating the top document.
+//
+// Why: an embedded host (the Gumloop artifact viewer) serves the bundle from a
+// single entry point. A top-level navigation to another page in the bundle can
+// be reset back to that entry, which presents as "the studio loaded for a
+// second, then threw me back to the homepage". Navigating only the inner frame
+// keeps the host's document exactly where it put it. Locally this changes
+// nothing except that the back button and #hash now work.
+(function initEmbeddedRouter() {
+  const ROUTES = {
+    '#design': { src: 'design.html', title: 'Floorplan designer' },
+    '#studio': { src: 'editor.html', title: 'Room studio' },
+  };
+  const hrefToHash = (href) => {
+    if (/^design\.html/.test(href)) return '#design';
+    if (/^editor\.html/.test(href)) return '#studio';
+    return null;
+  };
+
+  let overlay = null;
+
+  function close({ silent = false } = {}) {
+    if (overlay) {
+      overlay.classList.remove('is-open');
+      const el = overlay;
+      overlay = null;
+      setTimeout(() => el.remove(), 280);
+    }
+    document.body.classList.remove('approuter-open');
+    if (!silent && location.hash) {
+      history.pushState('', document.title, location.pathname + location.search);
+    }
+  }
+
+  function open(href, title) {
+    if (overlay) close({ silent: true });
+    overlay = document.createElement('div');
+    overlay.className = 'approuter';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-label', title);
+    overlay.innerHTML =
+      '<div class="approuter__bar">'
+      + '<button class="approuter__back" type="button">&larr; back to ainterior</button>'
+      + `<span class="approuter__title">${title}</span>`
+      + '</div>'
+      + '<div style="position:relative;flex:1 1 auto;display:flex">'
+      + '<div class="approuter__spinner">loading\u2026</div>'
+      + `<iframe class="approuter__frame" src="${href}" title="${title}"`
+      + ' allow="fullscreen"></iframe></div>';
+    document.body.appendChild(overlay);
+    document.body.classList.add('approuter-open');
+    requestAnimationFrame(() => overlay && overlay.classList.add('is-open'));
+
+    const frame = overlay.querySelector('iframe');
+    const spin = overlay.querySelector('.approuter__spinner');
+    const back = overlay.querySelector('.approuter__back');
+    frame.addEventListener('load', () => {
+      if (spin) spin.remove();
+      // Escape has to work while the user is inside the frame. Key events fire
+      // on the child document, which the parent never sees, so forward them
+      // from there too (same-origin in the bundle; harmless if it ever isn't).
+      try {
+        const doc = frame.contentDocument;
+        if (doc) {
+          doc.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); close(); }
+          });
+        }
+      } catch (e) { /* cross-origin — parent-level Escape still applies */ }
+    });
+    back.addEventListener('click', () => close());
+    // Focus the back control rather than the frame: it keeps Escape working at
+    // the parent level before the child loads, and gives keyboard users a
+    // predictable first stop.
+    back.focus();
+  }
+
+  function syncFromHash() {
+    const r = ROUTES[location.hash];
+    if (r) open(r.src, r.title);
+    else close({ silent: true });
+  }
+
+  document.addEventListener('click', (ev) => {
+    const a = ev.target.closest && ev.target.closest('a[href]');
+    if (!a) return;
+    if (a.target === '_blank' || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return;
+    const hash = hrefToHash(a.getAttribute('href') || '');
+    if (!hash) return;
+    ev.preventDefault();
+    history.pushState(null, '', hash);
+    syncFromHash();
+  });
+
+  window.addEventListener('popstate', syncFromHash);
+  window.addEventListener('hashchange', syncFromHash);
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && overlay) { ev.preventDefault(); close(); }
+  });
+
+  if (location.hash in ROUTES) syncFromHash();
+  window.aiRouter = { open, close, routes: Object.keys(ROUTES) };
+}());

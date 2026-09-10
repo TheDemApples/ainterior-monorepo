@@ -270,3 +270,29 @@ body.is-resizing .viewport { pointer-events: none; }
 .cat-item .cat-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
 .cat-item .nm { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .cat-item .nm > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── scan furniture dialog (photo -> 3D) ─────────────────────────────────── */
+.scandlg { max-width: min(96vw, 1180px); }
+.scan-body { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 860px) { .scan-body { grid-template-columns: repeat(3, 1fr); } }
+.scan-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.scan-drop {
+  display: grid; place-items: center;
+  min-height: 190px; padding: 12px;
+  border: 1px dashed var(--line-2); border-radius: 10px;
+  background: var(--surface-2); cursor: pointer; overflow: hidden;
+  transition: border-color .2s ease, background .2s ease;
+}
+.scan-drop:hover { border-color: var(--blueprint); background: var(--surface-3); }
+.scan-drop img { max-width: 100%; max-height: 220px; border-radius: 8px; display: block; }
+.scan-drop__hint { text-align: center; font-size: 12px; line-height: 1.7; }
+.scan-view {
+  min-height: 220px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface-2);
+  display: grid; place-items: center; overflow: hidden;
+}
+.scan-view canvas { display: block; }
+.scan-empty { font-size: 12px; }
+.scan-help { font-size: 12px; line-height: 1.6; }
+.scan-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.scan-note { min-height: 1.2em; }
