@@ -29,7 +29,7 @@ does not fit, we say so — we never shrink a sofa or overlap two pieces to make
 | `packages/blueprint/` | Annotated floor-plan SVG + FF&E schedule generator |
 | `packages/three-editor/` | The 3D editor core (Three.js), collision, gizmos, plan/3D/walk views |
 | `supabase/` | Migrations, RLS policies, SQL functions, Edge Functions |
-| `services/recon/` | Provider-agnostic photo/blueprint → 3D adapter (**mock works with no API key**) |
+| `services/recon/` | Photo → 3D adapter. **Default free provider: Hunyuan3D-2.1, no API key** |
 | `services/vision/` | Perceptual hash + embedding dedupe — the credit-saving path |
 | `apps/web/` | Next.js typed client + API route mirrors for local dev |
 | `tests/` | Cross-package integration, vision, recon suites |
@@ -103,6 +103,41 @@ frame time of flat materials — irrelevant on a GPU, decisive on a software ras
 measures actual frame pacing on load (time-bounded, so a slow machine reports slow immediately) and
 steps down to `medium` (no shadows) or `low` (no shadows or environment, pixel ratio 1). Override it
 with the **graphics** control in the toolbar; the choice persists.
+
+## Photo → 3D furniture scanning (free)
+
+Click **scan** in the studio, upload one photo, get the piece in your room.
+
+It runs against the public **`tencent/Hunyuan3D-2.1`** Hugging Face Space —
+**free, anonymous, no API key, no account**. The Space sends permissive CORS
+headers (verified: cross-origin `GET /config` and `POST /upload` both return
+200), so the browser talks to it directly and this works in a static hosted
+bundle with no server. `tools/recon-server.mjs` exists if you'd rather proxy it.
+
+Measured over 6 runs: **22.2 / 24.1 / 24.2 / 22.6 / 26.1s** from Node and
+**42.7s** end-to-end in headless Chromium, ~5.1 MB GLB, 297,684 triangles,
+6/6 successful.
+
+Two things this pipeline has to fix, and does:
+
+1. **The model bakes the floor into the mesh.** On the test chair, **259,835 of
+   297,684 triangles (87%) were floor slab** — the raw bbox is a pancake
+   (h/w 0.271). The mesh is watertight, so the slab is *welded* to the object and
+   connected-component splitting finds exactly one component; `mesh-import.js`
+   carves it by XZ-column thickness and then shaves the residual mat inside the
+   object's own footprint. Result: h/w 0.271 → **0.970**, resting on y=0.
+2. **There is no real-world scale.** Reconstruction output is normalised. Since
+   dimensional truth is the whole product (SPEC §8.8 — never invent a
+   measurement), the studio asks for **one** real measurement and scales
+   uniformly from it. Until you give it one, the scan is flagged `unscaled`,
+   `dims_mm` is `null`, and `toUserItem()` refuses with `NO_SCALE`. Unmeasured
+   axes are model proportions, not measurements — and we say so.
+
+Alternatives evaluated and rejected: **Meshy** (paid per generation);
+**Pixal3D** (anonymous ZeroGPU quota too small — "120s requested vs 155s left");
+**TripoSR** (its Space throws upstream errors); **TRELLIS** (Space in
+CONFIG_ERROR). Set `HF_TOKEN` for higher quota, or self-host Hunyuan3D — see
+`services/recon/RECON.md`.
 
 ## How the AI layout actually works
 

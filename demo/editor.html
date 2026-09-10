@@ -7,6 +7,16 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet" />
+  <!-- GLTFLoader (used by the furniture scanner) imports the bare specifier
+       "three". Map it to the SAME pinned URL editor.js already imports, so the
+       page ends up with exactly one three.js instance rather than two — two
+       copies break every instanceof check across module boundaries. -->
+  <script type="importmap">
+  {"imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }}
+  </script>
 <link rel="stylesheet" href="editor.css" />
 </head>
 <body>
@@ -59,6 +69,7 @@
       <button class="btn" id="undoBtn" title="Undo (⌘Z)">↶ undo</button>
       <button class="btn" id="redoBtn" title="Redo (⇧⌘Z)">↷ redo</button>
       <a class="btn" href="design.html" title="Design a new floorplan from scratch">new plan</a>
+      <button class="btn" id="scanBtn" title="Photograph a real piece and get it in 3D">scan</button>
       <button class="btn" id="bpBtn" title="Generate an annotated blueprint">blueprint</button>
       <button class="btn primary" id="snapBtn" title="Render a PNG">snapshot</button>
     </div>
