@@ -112,15 +112,30 @@ try:
         n = pg.evaluate("() => (window.aiCatalog||[]).length")
         check("studio: 284-item catalog loaded", n >= 284, f"{n} items")
 
-        # #6 thumbnails
+        # #6 thumbnails. They hydrate lazily now (painting all 284 data URIs at
+        # once costs tens of MB of image memory for a dozen visible rows), so the
+        # correct assertion is: visible rows are painted, and scrolling paints more.
         th = pg.evaluate("""() => {
           const tiles=[...document.querySelectorAll('#catList .cat-thumb')];
-          const withImg = tiles.filter(t => /url\\(/.test(t.style.backgroundImage||''));
-          return {tiles: tiles.length, withImg: withImg.length,
-                  sample: withImg.length ? withImg[0].style.backgroundImage.slice(0,42) : null};
+          const painted = tiles.filter(t => /url\\(/.test(t.style.backgroundImage||''));
+          return {tiles: tiles.length, painted: painted.length};
         }""")
-        check("#6 catalog rows show product thumbnails",
-              th["tiles"] > 20 and th["withImg"] >= th["tiles"] * 0.9, th)
+        check("#6 catalog rows show product thumbnails (visible rows painted)",
+              th["tiles"] > 200 and th["painted"] > 0, th)
+        pg.evaluate("() => { const l=document.querySelector('#catList'); l.scrollTop = 2400; }")
+        # Poll rather than sleep once: the IntersectionObserver callback competes
+        # with the 3D render loop, so a fixed wait is flaky under load.
+        th2 = th["painted"]
+        for _ in range(20):
+            pg.wait_for_timeout(400)
+            th2 = pg.evaluate("""() => {
+              const tiles=[...document.querySelectorAll('#catList .cat-thumb')];
+              return tiles.filter(t => /url\\(/.test(t.style.backgroundImage||'')).length;
+            }""")
+            if th2 > th["painted"]:
+                break
+        check("#6 scrolling hydrates further thumbnails (lazy, not eager)",
+              th2 > th["painted"], f"{th['painted']} painted -> {th2} after scrolling")
 
         # #5 resizable panels
         rz = pg.evaluate("""() => {
